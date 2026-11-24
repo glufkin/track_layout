@@ -117,6 +117,13 @@ export class Input {
     this.app.notify();
   }
 
+  /** Forget the keep-placing pin (after undo/redo it may name a piece that no longer exists). */
+  clearPin(): void {
+    this.stickAt = null;
+    if (this._mode.kind === 'place' && this._mode.prefer) this._mode = { ...this._mode, prefer: undefined };
+    this.refresh();
+  }
+
   // ---- helpers ----
 
   private size(): Vec2 { return this.app.viewSize(); }
@@ -303,11 +310,15 @@ export class Input {
     }
     switch (k) {
       case 'Alt': this.alt = true; e.preventDefault(); this.refresh(); return;
-      case ' ': this.space = true; e.preventDefault(); return;
+      case ' ':
+        // Only claim Space over the canvas (or nothing focused); elsewhere it presses buttons etc.
+        if (e.target instanceof Element && e.target !== this.canvas && e.target !== document.body) return;
+        this.space = true; e.preventDefault(); return;
       case 'Escape':
         if (m.kind === 'select') { this.selectOnly([]); this.app.notify(); } else this.setMode({ kind: 'select' });
         return;
       case 'Tab':
+        if (m.kind !== 'place' && m.kind !== 'placeTrain') return; // keep keyboard navigation
         e.preventDefault();
         if (m.kind === 'place') {
           const n = pieceConnectors(m.type, m.flipped).length;

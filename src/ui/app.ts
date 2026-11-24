@@ -104,8 +104,8 @@ export class App {
   viewSize(): Vec2 { return { x: this.canvas.clientWidth, y: this.canvas.clientHeight }; }
 
   exec(cmd: Command): void { this.history.exec(cmd, this.doc); this.afterEdit(); }
-  undo(): void { if (this.history.undo(this.doc)) this.afterEdit(); }
-  redo(): void { if (this.history.redo(this.doc)) this.afterEdit(); }
+  undo(): void { if (this.history.undo(this.doc)) { this.input.clearPin(); this.afterEdit(); } }
+  redo(): void { if (this.history.redo(this.doc)) { this.input.clearPin(); this.afterEdit(); } }
 
   private afterEdit(): void {
     this.doc.rebuild();

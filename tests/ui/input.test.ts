@@ -335,3 +335,42 @@ test('New asks before discarding a restored layout (no history), and not for an 
   app.newLayout();
   expect(app.doc.layout.pieces).toHaveLength(0);
 });
+
+test('undo/redo clear the keep-placing pin (no ghost stuck on a removed piece)', () => {
+  place('curve-m-45');
+  click({ x: 40, y: 40 });
+  expect(app.input.mode).toMatchObject({ kind: 'place', prefer: expect.anything() });
+  key('z', { ctrlKey: true });
+  expect(app.doc.layout.pieces).toHaveLength(0);
+  expect((app.input.mode as { prefer?: unknown }).prefer).toBeUndefined();
+  // The next click places a fresh piece at the cursor, not at the removed piece's end.
+  click({ x: 40, y: 40 });
+  click({ x: 40, y: 40 });
+  expect(app.doc.layout.pieces).toHaveLength(2);
+  app.undo();
+  expect(app.doc.layout.pieces).toHaveLength(1);
+  app.input.mode = { ...(app.input.mode as Extract<typeof app.input.mode, { kind: 'place' }>), prefer: app.doc.graph.open[0] };
+  expect((app.input.mode as { prefer?: unknown }).prefer).toBeDefined();
+  app.redo();
+  expect(app.doc.layout.pieces).toHaveLength(2);
+  expect((app.input.mode as { prefer?: unknown }).prefer).toBeUndefined();
+});
+
+const keyEvent = (k: string, target: EventTarget): KeyboardEvent => {
+  const e = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+  target.dispatchEvent(e);
+  return e;
+};
+
+test('Tab is only intercepted while placing; Space only on the canvas or body', () => {
+  const btn = document.createElement('button');
+  document.body.append(btn);
+  expect(keyEvent('Tab', document.body).defaultPrevented).toBe(false);
+  expect(keyEvent(' ', btn).defaultPrevented).toBe(false);
+  expect(keyEvent(' ', document.body).defaultPrevented).toBe(true);
+  expect(keyEvent(' ', canvas).defaultPrevented).toBe(true);
+  place('curve-m-45');
+  expect(keyEvent('Tab', document.body).defaultPrevented).toBe(true);
+  app.input.mode = { kind: 'placeTrain', cars: 0, dir: 1 };
+  expect(keyEvent('Tab', document.body).defaultPrevented).toBe(true);
+});
