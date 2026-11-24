@@ -72,3 +72,24 @@ test('batch undoes in reverse as one step', () => {
   expect(d.layout.pieces).toHaveLength(0);
   expect(h.canUndo).toBe(false);
 });
+test('setSwitchMode undo/redo change only the mode, never the live switch state', () => {
+  const d = new Doc(emptyLayout()); const h = new History();
+  h.exec(placePieces([{ ...P('s', 'switch', 0, 0), switch: { mode: 'manual', state: 0 } }]), d);
+  h.exec(setSwitchMode('s', 'auto'), d);
+  d.piece('s')!.switch!.state = 1; // toggled during play
+  h.undo(d);
+  expect(d.piece('s')!.switch).toEqual({ mode: 'manual', state: 1 });
+  d.piece('s')!.switch!.state = 0;
+  h.redo(d);
+  expect(d.piece('s')!.switch).toEqual({ mode: 'auto', state: 0 });
+});
+test('transformPieces undo/redo keep the current switch state', () => {
+  const d = new Doc(emptyLayout()); const h = new History();
+  h.exec(placePieces([{ ...P('s', 'switch', 0, 0), switch: { mode: 'auto', state: 0 } }]), d);
+  h.exec(transformPieces(['s'], new Map([['s', { x: 3, y: 0, rot: 0 }]])), d);
+  d.piece('s')!.switch!.state = 1;
+  h.undo(d);
+  expect(d.piece('s')).toMatchObject({ x: 0, switch: { mode: 'auto', state: 1 } });
+  h.redo(d);
+  expect(d.piece('s')).toMatchObject({ x: 3, switch: { mode: 'auto', state: 1 } });
+});

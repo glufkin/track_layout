@@ -7,10 +7,19 @@ import type { Command } from './history';
 
 const clone = <T>(p: T): T => structuredClone(p);
 
-/** Replace the pieces whose ids match a snapshot, in place in the array. */
+/**
+ * Replace the pieces whose ids match a snapshot, in place in the array. A switch keeps its CURRENT
+ * state: toggling is play, not an edit, so undo/redo never roll it back.
+ */
 function restore(doc: Doc, snaps: Piece[]): void {
   const byId = new Map(snaps.map((p) => [p.id, p]));
-  doc.layout.pieces = doc.layout.pieces.map((p) => (byId.has(p.id) ? clone(byId.get(p.id)!) : p));
+  doc.layout.pieces = doc.layout.pieces.map((p) => {
+    const snap = byId.get(p.id);
+    if (!snap) return p;
+    const next = clone(snap);
+    if (next.switch && p.switch) next.switch.state = p.switch.state;
+    return next;
+  });
   doc.rebuild();
 }
 
@@ -75,18 +84,22 @@ export function deletePieces(ids: string[]): Command {
   };
 }
 
+/** Change a switch's mode; undo/redo touch only the mode, never its live state. */
 export function setSwitchMode(id: string, mode: 'manual' | 'auto'): Command {
-  let before: Piece | null = null;
+  let before: 'manual' | 'auto' | null = null;
+  const set = (doc: Doc, m: 'manual' | 'auto'): void => {
+    const p = doc.piece(id);
+    if (!p?.switch) return;
+    p.switch = { ...p.switch, mode: m };
+    doc.rebuild();
+  };
   return {
     label: 'Switch mode',
     do(doc) {
-      const p = doc.piece(id);
-      if (!p?.switch) return;
-      before = clone(p);
-      p.switch = { ...p.switch, mode };
-      doc.rebuild();
+      before = doc.piece(id)?.switch?.mode ?? null;
+      if (before !== null) set(doc, mode);
     },
-    undo(doc) { if (before) restore(doc, [before]); },
+    undo(doc) { if (before !== null) set(doc, before); },
   };
 }
 
