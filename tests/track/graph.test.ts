@@ -83,6 +83,16 @@ test('parallel straights 0.2U apart overlap; 0.5U apart do not', () => {
 test('a piece stacked exactly on another overlaps (curve on curve)', () => {
   expect(buildGraph([P('a', 'curve-m-45', 0, 0), P('b', 'curve-m-45', 0, 0)]).overlaps).toEqual([['a', 'b']]);
 });
+test('a straight-1-4 between two straights is not an overlap (graph distance 2)', () => {
+  const g = buildGraph([P('a', 'straight-1', 0, 0), P('q', 'straight-1-4', 1, 0), P('c', 'straight-1', 1.25, 0)]);
+  expect(g.joins.size).toBe(4);
+  expect(g.overlaps).toEqual([]);
+});
+test('pieces sharing a neighbour are not checked against each other (documented limitation)', () => {
+  // a and c both join q, and c lies back over a; the exclusion deliberately hides this.
+  const g = buildGraph([P('a', 'straight-1', 0, 0), P('q', 'straight-1-4', 1, 0), P('c', 'straight-1', 1.25, 0)]);
+  expect(g.overlaps).not.toContainEqual(['a', 'c']);
+});
 test('1000 pieces rebuild quickly', () => {
   const ps: Piece[] = [];
   for (let i = 0; i < 1000; i++) ps.push(P('s' + i, 'straight-1', (i % 40) * 1, Math.floor(i / 40) * 2));

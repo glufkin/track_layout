@@ -151,7 +151,19 @@ export function buildGraph(pieces: Piece[]): TrackGraph {
   // Overlaps via a 1U spatial hash over centreline bounding boxes (padded by the clearance).
   const shapes = pieces.map(makeShape);
   const joinedPieces = new Set<string>();
-  for (const [k, w] of joins) joinedPieces.add(k.slice(0, k.lastIndexOf(':')) + '|' + w.pieceId);
+  const nbrs = new Map<string, Set<string>>();
+  const link = (a: string, b: string) => { const l = nbrs.get(a); if (l) l.add(b); else nbrs.set(a, new Set([b])); };
+  for (const [k, w] of joins) {
+    const id = k.slice(0, k.lastIndexOf(':'));
+    joinedPieces.add(id + '|' + w.pieceId);
+    link(id, w.pieceId);
+  }
+  // Pieces joined to the same third piece (graph distance 2) are also exempt: across a short piece such as
+  // straight-1-4 their ends are < OVERLAP_CLEARANCE apart. Limitation: a genuine overlap between two pieces
+  // that share a neighbour is therefore not detected.
+  for (const set of nbrs.values()) {
+    for (const x of set) for (const y of set) if (x !== y) joinedPieces.add(x + '|' + y);
+  }
   const grid = new Map<string, number[]>();
   shapes.forEach((s, i) => {
     for (let cx = cellOf(s.box[0]); cx <= cellOf(s.box[2]); cx++) {
