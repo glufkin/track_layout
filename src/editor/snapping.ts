@@ -40,7 +40,7 @@ export function computeGhost(doc: Doc, req: GhostRequest): GhostResult {
 
   const open = doc.graph.open;
   const pref = req.prefer;
-  if (pref && dist(pref.pos, req.cursor) <= 3 * req.snapRadius) {
+  if (pref && open.some((c) => c.pieceId === pref.pieceId && c.index === pref.index) && dist(pref.pos, req.cursor) <= 3 * req.snapRadius) {
     const r = fit(pref);
     if (r) return r;
   }
@@ -66,7 +66,15 @@ const moveBy = (p: Vec2, g: GroupSnap): Vec2 => add(add(rotate(sub(p, g.pivot), 
 export function snapGroup(doc: Doc, ids: string[], proposed: GroupSnap, snapRadius: number, alt: boolean): GroupSnap {
   if (alt) return proposed;
   const sel = new Set(ids);
-  const targets = doc.graph.open.filter((c) => !sel.has(c.pieceId));
+  // Unselected connectors that are open, or joined to a selected piece (that join breaks, so it may re-form).
+  const targets: WorldConnector[] = [];
+  for (const p of doc.layout.pieces) {
+    if (sel.has(p.id)) continue;
+    for (const c of worldConnectors(p)) {
+      const j = doc.graph.joins.get(connKey(c.pieceId, c.index));
+      if (!j || sel.has(j.pieceId)) targets.push(c);
+    }
+  }
   if (!targets.length) return proposed;
 
   // Selected connectors that are open, or joined to an unselected piece (that join breaks).

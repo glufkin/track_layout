@@ -56,7 +56,7 @@ test('attaching to a ramp high end puts the ghost at level+1', () => {
   expect(r.level).toBe(1);
 });
 
-test('attaching the ghost low end to a high target lowers the ghost level', () => {
+test('rejects a target that would put the ghost below level 0 and falls back to grid', () => {
   const d = docOf(P('r', 'ramp-2', 0, 0));
   // ghost ramp connector 1 (high end, offset 1) attached to the ramp's open high end? use ghost conn 0 at level-1 target
   const r = computeGhost(d, req({ type: 'ramp-2', attachIndex: 1, cursor: { x: 0, y: 0 } }));
@@ -107,4 +107,30 @@ test('posesAfterGroup rotates about the pivot then translates', () => {
   const m = posesAfterGroup(d, ['a'], { delta: { x: 5, y: 0 }, rot: 90, pivot: { x: 0, y: 0 } });
   const a = m.get('a')!;
   expect(a.x).toBeCloseTo(5); expect(a.y).toBeCloseTo(1); expect(a.rot).toBeCloseTo(100);
+});
+
+test('snapGroup lets a dragged piece snap back to the piece it is joined to', () => {
+  const d = docOf(P('a', 'straight-1', 0, 0), P('b', 'straight-1', 1, 0));
+  const g = snapGroup(d, ['b'], { delta: { x: 0.05, y: 0.05 }, rot: 0, pivot: { x: 1, y: 0 } }, 0.25, false);
+  const b = posesAfterGroup(d, ['b'], g).get('b')!;
+  expect(b.x).toBeCloseTo(1); expect(b.y).toBeCloseTo(0); expect(b.rot).toBeCloseTo(0);
+});
+
+test('snapGroup does not pair connectors on different levels', () => {
+  const d = docOf(P('a', 'straight-1', 0, 0), P('b', 'straight-1', 3, 0.1, 0, 1));
+  const prop = { delta: { x: -1.98, y: -0.1 }, rot: 0, pivot: { x: 3, y: 0.1 } };
+  expect(snapGroup(d, ['b'], prop, 0.25, false)).toEqual(prop);
+});
+
+test('snapGroup rejects pairs whose headings are more than 45 degrees from opposite', () => {
+  const d = docOf(P('a', 'straight-1', 0, 0), P('b', 'straight-1', 3, 0.1));
+  const prop = { delta: { x: -1.98, y: -0.1 }, rot: 90, pivot: { x: 3, y: 0.1 } };
+  expect(snapGroup(d, ['b'], prop, 0.25, false)).toEqual(prop);
+});
+
+test('a stale prefer (connector now joined) is ignored', () => {
+  const d = docOf(P('a', 'straight-1', 0, 0), P('b', 'straight-1', 1, 0));
+  const stale = { pieceId: 'a', index: 1, pos: { x: 1, y: 0 }, heading: 0, level: 0 };
+  const r = computeGhost(d, req({ cursor: { x: 1, y: 0.5 }, prefer: stale }));
+  expect(r.mode).toBe('grid');
 });
