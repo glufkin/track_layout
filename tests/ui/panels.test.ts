@@ -5,6 +5,7 @@ import type { Vec2 } from '../../src/geom/vec';
 import { samplePath } from '../../src/geom/path';
 import { worldRoutePath } from '../../src/track/graph';
 import { worldToScreen } from '../../src/render/camera';
+import { AUTOSAVE_KEY } from '../../src/io/serialize';
 
 let app: App;
 let canvas: HTMLCanvasElement;
@@ -19,7 +20,7 @@ beforeEach(() => {
   canvas = app.canvas;
 });
 
-afterEach(() => { app.dispose(); vi.restoreAllMocks(); });
+afterEach(() => { app.dispose(); vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 const pointer = (type: string, at: Vec2, o: PointerEventInit = {}): PointerEvent =>
   new PointerEvent(type, { clientX: at.x, clientY: at.y, button: 0, buttons: type === 'pointerup' ? 0 : 1, bubbles: true, ...o });
@@ -159,4 +160,59 @@ test('no switch panel for a non-switch or a multi-piece selection', () => {
   click(onPiece(app.doc.layout.pieces[0].id));
   expect(app.selection.size).toBe(1);
   expect(panel()).toBeNull();
+});
+
+const saved = (): { trains: { running: boolean; speed: number; head: { direction: string } | null }[] } =>
+  JSON.parse(localStorage.getItem(AUTOSAVE_KEY)!);
+
+test('Run/Stop, Reverse and speed are autosaved (play state survives a reload)', () => {
+  const id = trainOnStraight();
+  vi.useFakeTimers();
+  vi.advanceTimersByTime(1000);
+  localStorage.clear();
+  q<HTMLButtonElement>('[data-action="run"]').click();
+  vi.advanceTimersByTime(500);
+  expect(saved().trains[0].running).toBe(true);
+  const dir = saved().trains[0].head!.direction;
+  q<HTMLButtonElement>('[data-action="reverse"]').click();
+  vi.advanceTimersByTime(500);
+  expect(saved().trains[0].head!.direction).not.toBe(dir);
+  const speed = q<HTMLInputElement>('[data-action="speed"]');
+  speed.value = '2.5';
+  speed.dispatchEvent(new Event('input', { bubbles: true }));
+  vi.advanceTimersByTime(500);
+  expect(saved().trains[0].speed).toBe(2.5);
+  expect(app.doc.train(id)!.speed).toBe(2.5);
+});
+
+test('pagehide flushes a pending autosave at once', () => {
+  trainOnStraight();
+  vi.useFakeTimers();
+  vi.advanceTimersByTime(1000);
+  localStorage.clear();
+  q<HTMLButtonElement>('[data-action="run"]').click();
+  expect(localStorage.getItem(AUTOSAVE_KEY)).toBeNull();
+  window.dispatchEvent(new Event('pagehide'));
+  expect(saved().trains[0].running).toBe(true);
+});
+
+test('while a train runs, the layout is autosaved every 5 s of frames', () => {
+  const id = trainOnStraight();
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { frames.push(cb); return frames.length; });
+  vi.stubGlobal('cancelAnimationFrame', () => {});
+  app.doc.train(id)!.running = true;
+  app.doc.train(id)!.speed = 0.2;
+  app.start();
+  localStorage.clear();
+  const frameAt = (ms: number): void => frames.shift()!(ms);
+  frameAt(0);
+  for (let ms = 100; ms < 5000; ms += 100) frameAt(ms);
+  expect(localStorage.getItem(AUTOSAVE_KEY)).toBeNull();
+  frameAt(5000);
+  expect(localStorage.getItem(AUTOSAVE_KEY)).not.toBeNull();
+  localStorage.clear();
+  frameAt(5100);
+  expect(localStorage.getItem(AUTOSAVE_KEY)).toBeNull();
+  app.dispose();
 });

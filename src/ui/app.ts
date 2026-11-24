@@ -14,6 +14,8 @@ import { buildPalette } from './palette';
 import { hidePanels, positionPanels, showSwitchPanel, showTrainPanel } from './panels';
 
 export const AUTOSAVE_DELAY_MS = 500;
+/** While a train runs, its moving position is autosaved at most this often. */
+export const PLAY_AUTOSAVE_MS = 5000;
 
 /**
  * The editor: owns the document, history, simulation and view, and wires the DOM (toolbar on
@@ -43,6 +45,8 @@ export class App {
   private renderQueued = false;
   private frame: number | null = null;
   private lastTime: number | null = null;
+  /** Frame time of the last autosave made because trains were running (null: none running). */
+  private lastPlaySave: number | null = null;
   private disposers: Array<() => void> = [];
 
   constructor(root: HTMLElement) {
@@ -75,9 +79,12 @@ export class App {
       const file = e.dataTransfer?.files[0];
       if (file && /\.json$/i.test(file.name)) void file.text().then((t) => this.openText(t));
     };
+    const onPageHide = (): void => this.flushAutosave();
     window.addEventListener('dragover', onDragOver);
     window.addEventListener('drop', onDrop);
+    window.addEventListener('pagehide', onPageHide);
     this.disposers.push(() => {
+      window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('resize', onResize);
       window.removeEventListener('dragover', onDragOver);
       window.removeEventListener('drop', onDrop);
@@ -130,6 +137,23 @@ export class App {
       this.autosaveTimer = null;
       saveAutosave(this.doc.layout);
     }, AUTOSAVE_DELAY_MS);
+  }
+
+  /** Save now (e.g. the page is going away), cancelling any pending debounced save. */
+  flushAutosave(): void {
+    if (this.autosaveTimer !== null) clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = null;
+    saveAutosave(this.doc.layout);
+  }
+
+  /** While any placed train runs, autosave its moving state every PLAY_AUTOSAVE_MS of frame time. */
+  private playAutosave(time: number): void {
+    const running = !this.sim.paused && this.doc.layout.trains.some((t) => t.running && t.head !== null);
+    if (!running) { this.lastPlaySave = null; return; }
+    if (this.lastPlaySave === null) { this.lastPlaySave = time; return; } // starting to run already saved
+    if (time - this.lastPlaySave < PLAY_AUTOSAVE_MS) return;
+    this.lastPlaySave = time;
+    saveAutosave(this.doc.layout);
   }
 
   /** Subscribe to state changes (history, selection, settings, mode). */
@@ -214,6 +238,7 @@ export class App {
       this.lastTime = time;
       try {
         if (dt > 0) this.sim.step(dt);
+        this.playAutosave(time);
         this.draw();
       } catch (e) {
         console.error('Frame failed:', e); // keep the loop alive; the next frame may well succeed

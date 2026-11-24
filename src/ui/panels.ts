@@ -76,11 +76,11 @@ export function showTrainPanel(app: App, trainId: string): void {
   const run = button('', 'run', () => {
     const t = train();
     if (!t || t.head === null) return;
-    t.running = !t.running; // play, not an edit
+    t.running = !t.running; // play, not an edit: autosaved, not in history
     sync();
-    app.requestRender();
+    app.changed();
   });
-  const reverse = button('⇄ Reverse', 'reverse', () => { app.sim.reverse(trainId); app.requestRender(); });
+  const reverse = button('⇄ Reverse', 'reverse', () => { app.sim.reverse(trainId); app.changed(); });
   const placeBack = button('Place back', 'place-back', () => {
     const t = train();
     if (!t) return;
@@ -99,7 +99,7 @@ export function showTrainPanel(app: App, trainId: string): void {
     const t = train();
     if (!t) return;
     t.speed = Math.min(MAX_SPEED, Math.max(MIN_SPEED, Number(speed.value))); // play, not an edit
-    app.requestRender();
+    app.changed();
   });
 
   const cars = document.createElement('input');
