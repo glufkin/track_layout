@@ -156,7 +156,9 @@ export class App {
   }
 
   newLayout(): void {
-    if ((this.history.canUndo || this.history.canRedo) && !window.confirm('Discard the current layout and start a new one?')) return;
+    const { pieces, trains } = this.doc.layout;
+    const hasWork = pieces.length > 0 || trains.length > 0 || this.history.canUndo || this.history.canRedo;
+    if (hasWork && !window.confirm('Discard the current layout and start a new one?')) return;
     this.loadLayout(emptyLayout());
   }
 

@@ -320,3 +320,18 @@ test('the animation loop survives a throwing frame (logs and keeps going)', () =
   app.dispose();
   vi.unstubAllGlobals();
 });
+
+test('New asks before discarding a restored layout (no history), and not for an empty one', () => {
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  app.newLayout();
+  expect(confirm).not.toHaveBeenCalled();
+  const layout = app.doc.layout;
+  app.loadLayout({ ...layout, pieces: [{ id: 'p1', type: 'straight-1', x: 0, y: 0, rot: 0, level: 0, flipped: false }] });
+  expect(app.history.canUndo).toBe(false);
+  app.newLayout();
+  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(app.doc.layout.pieces).toHaveLength(1);
+  confirm.mockReturnValue(true);
+  app.newLayout();
+  expect(app.doc.layout.pieces).toHaveLength(0);
+});
