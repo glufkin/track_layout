@@ -119,7 +119,7 @@ export function deserialize(text: string): { ok: true; layout: Layout } | { ok: 
   try {
     if (!isObj(data) || data.format !== FORMAT) fail(`Not a track layout file (format must be "${FORMAT}")`);
     const d = data as Obj;
-    if (typeof d.version !== 'number' || !Number.isFinite(d.version)) fail('version must be a number');
+    if (typeof d.version !== 'number' || !Number.isInteger(d.version) || d.version < 1) fail('version must be an integer ≥ 1');
     if ((d.version as number) > VERSION) fail(`Unsupported version ${d.version} (this app reads up to ${VERSION})`);
     if (!Array.isArray(d.pieces)) fail('pieces must be an array');
     if (!Array.isArray(d.trains)) fail('trains must be an array');
