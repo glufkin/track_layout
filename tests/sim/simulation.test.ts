@@ -62,8 +62,10 @@ test('train accelerates at ACCEL up to set speed', () => {
 
 test('stopped or crashed train decelerates to 0', () => {
   const a = train('a', T('s0', 0), { currentSpeed: 1, running: false });
+  // b and its partner c overlap, so b stays crashed (a crash clears once the trains are apart).
   const b = train('b', T('s2', 0), { currentSpeed: 1, crashed: true });
-  const d = doc(longLine(), [a, b]);
+  const c = train('c', T('s2', 0), { currentSpeed: 1, crashed: true });
+  const d = doc(longLine(), [a, b, c]);
   const sim = new Simulation(d);
   sim.step(0.25);
   expect(a.currentSpeed).toBeCloseTo(1 - ACCEL * 0.25, 9);
@@ -167,6 +169,7 @@ test('auto switch waits while a second train occupies it', () => {
   // Parked on the branch, its head just past the switch.
   const t2 = train('t2', T('c', 0.2), { running: false });
   const d = doc(switchLayout(), [t, t2]);
+  d.layout.settings.collisions = false; // the trains share the switch; this test is about switch occupancy
   expect(occupiedPieces(d, t2).has('s')).toBe(true);
   const sim = new Simulation(d);
   run(sim, 5);
