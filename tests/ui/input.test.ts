@@ -305,3 +305,18 @@ test('Open with a bad file alerts and keeps the layout', () => {
   expect(alert).toHaveBeenCalledTimes(1);
   expect(app.doc.layout.pieces).toHaveLength(1);
 });
+
+test('the animation loop survives a throwing frame (logs and keeps going)', () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { frames.push(cb); return frames.length; });
+  vi.stubGlobal('cancelAnimationFrame', () => {});
+  const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(app.sim, 'step').mockImplementation(() => { throw new Error('Unknown piece'); });
+  app.start();
+  frames.shift()!(0);
+  expect(() => frames.shift()!(16)).not.toThrow();
+  expect(err).toHaveBeenCalled();
+  expect(frames).toHaveLength(1);
+  app.dispose();
+  vi.unstubAllGlobals();
+});

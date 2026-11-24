@@ -23,7 +23,7 @@ export class History {
   undo(doc: Doc): boolean {
     const cmd = this.undoStack.pop();
     if (!cmd) return false;
-    cmd.undo(doc);
+    try { cmd.undo(doc); } catch (e) { this.undoStack.push(cmd); throw e; } // keep the stacks consistent
     this.redoStack.push(cmd);
     this.onChange?.();
     return true;
@@ -32,7 +32,7 @@ export class History {
   redo(doc: Doc): boolean {
     const cmd = this.redoStack.pop();
     if (!cmd) return false;
-    cmd.do(doc);
+    try { cmd.do(doc); } catch (e) { this.redoStack.push(cmd); throw e; }
     this.undoStack.push(cmd);
     this.onChange?.();
     return true;

@@ -1,7 +1,7 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { emptyLayout, type Layout, type Piece, type Train } from '../../src/model/types';
 import {
-  AUTOSAVE_KEY, FORMAT, VERSION, deserialize, loadAutosave, saveAutosave, serialize,
+  AUTOSAVE_KEY, AUTOSAVE_REJECTED_KEY, FORMAT, VERSION, deserialize, loadAutosave, saveAutosave, serialize,
 } from '../../src/io/serialize';
 
 const piece = (id: string, type = 'straight-1', extra: Partial<Piece> = {}): Piece =>
@@ -146,7 +146,21 @@ describe('autosave', () => {
     const st = memStorage();
     expect(loadAutosave(st)).toBeNull();
     st.setItem(AUTOSAVE_KEY, 'garbage');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(loadAutosave(st)).toBeNull();
+    warn.mockRestore();
+  });
+
+  test('a rejected autosave is backed up under the rejected key with a warning', () => {
+    const st = memStorage();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const bad = JSON.stringify({ format: FORMAT, version: 1, pieces: [{ id: 'x' }], trains: [] });
+    st.setItem(AUTOSAVE_KEY, bad);
+    expect(loadAutosave(st)).toBeNull();
+    expect(st.getItem(AUTOSAVE_REJECTED_KEY)).toBe(bad);
+    expect(AUTOSAVE_REJECTED_KEY).toBe('track-layout:autosave-rejected');
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   test('survives a throwing storage', () => {

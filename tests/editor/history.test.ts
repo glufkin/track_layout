@@ -36,3 +36,24 @@ test('onChange fires after exec/undo/redo/clear', () => {
   expect(h.onChange).toHaveBeenCalledTimes(4);
   expect(h.canUndo).toBe(false);
 });
+
+test('a throwing undo or redo keeps the command on its stack', () => {
+  const d = new Doc(emptyLayout()); const h = new History();
+  let fail = false;
+  const cmd: Command = {
+    label: 'flaky',
+    do: () => { if (fail) throw new Error('redo boom'); },
+    undo: () => { if (fail) throw new Error('undo boom'); },
+  };
+  h.exec(cmd, d);
+  fail = true;
+  expect(() => h.undo(d)).toThrow('undo boom');
+  expect([h.canUndo, h.canRedo]).toEqual([true, false]);
+  fail = false;
+  h.undo(d);
+  fail = true;
+  expect(() => h.redo(d)).toThrow('redo boom');
+  expect([h.canUndo, h.canRedo]).toEqual([false, true]);
+  fail = false;
+  expect(h.redo(d)).toBe(true);
+});

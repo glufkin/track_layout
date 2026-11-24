@@ -4,6 +4,8 @@ import { CATALOG, getPieceDef } from '../track/catalog';
 export const FORMAT = 'track-layout';
 export const VERSION = 1;
 export const AUTOSAVE_KEY = 'track-layout:autosave';
+/** Where an autosave that failed to load is kept, so a bad load never silently loses it. */
+export const AUTOSAVE_REJECTED_KEY = 'track-layout:autosave-rejected';
 
 const STYLES: StyleId[] = ['wooden', 'model', 'brick'];
 const r6 = (n: number): number => Math.round(n * 1e6) / 1e6;
@@ -171,6 +173,9 @@ export function loadAutosave(storage: Storage | undefined = defaultStorage()): L
     const text = storage?.getItem(AUTOSAVE_KEY);
     if (!text) return null;
     const r = deserialize(text);
-    return r.ok ? r.layout : null;
+    if (r.ok) return r.layout;
+    console.warn(`Autosave rejected (${r.error}); kept a copy under "${AUTOSAVE_REJECTED_KEY}".`);
+    try { storage?.setItem(AUTOSAVE_REJECTED_KEY, text); } catch { /* storage full or unavailable */ }
+    return null;
   } catch { return null; }
 }

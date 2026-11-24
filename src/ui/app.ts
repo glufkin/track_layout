@@ -210,8 +210,12 @@ export class App {
     const tick = (time: number): void => {
       const dt = this.lastTime === null ? 0 : (time - this.lastTime) / 1000;
       this.lastTime = time;
-      if (dt > 0) this.sim.step(dt);
-      this.draw();
+      try {
+        if (dt > 0) this.sim.step(dt);
+        this.draw();
+      } catch (e) {
+        console.error('Frame failed:', e); // keep the loop alive; the next frame may well succeed
+      }
       this.frame = requestAnimationFrame(tick);
     };
     this.frame = requestAnimationFrame(tick);
