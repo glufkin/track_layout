@@ -19,11 +19,15 @@ const train = (id: string, head: TrackPos | null, o: Partial<Train> = {}): Train
 const overlay = (o: Partial<Overlay> = {}): Overlay => ({ selectedPieces: new Set(), showConnectors: false, ...o });
 const BAND = '#d9b27c';
 
-test('wooden style is registered', () => {
-  expect(STYLES.wooden.id).toBe('wooden');
+const STYLE_IDS = ['wooden', 'model', 'brick'] as const;
+const TABLE_COLOURS = { wooden: '#e8d3a9', model: '#7da35a', brick: '#3a9a3a' } as const;
+
+test('all three styles are registered with their own id and name', () => {
+  expect(STYLE_IDS.map((id) => STYLES[id].id)).toEqual(['wooden', 'model', 'brick']);
+  expect(STYLE_IDS.map((id) => STYLES[id].name)).toEqual(['Wooden', 'Model train', 'Toy brick']);
 });
 
-test('render does not throw for every catalogue type, both flips, levels 0..3, with every overlay', () => {
+test.each(STYLE_IDS)('render does not throw for every catalogue type, both flips, levels 0..3, with every overlay (%s)', (sid) => {
   const pieces: Piece[] = [];
   let n = 0;
   PALETTE_ORDER.forEach((type, i) => {
@@ -48,17 +52,17 @@ test('render does not throw for every catalogue type, both flips, levels 0..3, w
     ghost: { piece: P('g', 'switch', 0, -5, { switch: { mode: 'manual', state: 1 } }), valid: false },
     ghostTrain: liftedCarPoses({ x: 1, y: -6, rot: 0 }, 2),
   });
-  expect(() => render(ctx, d, defaultCamera(), size, ov, 'wooden')).not.toThrow();
+  expect(() => render(ctx, d, defaultCamera(), size, ov, sid)).not.toThrow();
   expect(() => render(ctx, d, defaultCamera(), size, overlay({ ghost: { piece: ramp, valid: true } }), 'wooden')).not.toThrow();
   expect(calls.length).toBeGreaterThan(100);
 });
 
-test('background is painted first, in the table colour', () => {
+test.each(STYLE_IDS)('background is painted first, in the table colour (%s)', (sid) => {
   const { ctx, calls } = mockContext();
-  render(ctx, new Doc(emptyLayout()), defaultCamera(), size, overlay(), 'wooden');
+  render(ctx, new Doc(emptyLayout()), defaultCamera(), size, overlay(), sid);
   const first = calls.find((c) => c.name === 'fill' || c.name === 'fillRect');
   expect(first).toBeDefined();
-  expect(first!.fillStyle).toBe('#e8d3a9');
+  expect(first!.fillStyle).toBe(TABLE_COLOURS[sid]);
 });
 
 test('a level-1 piece is drawn after a level-0 car', () => {
@@ -130,4 +134,23 @@ test('open connectors are drawn only when showConnectors is on', () => {
   render(a.ctx, d, defaultCamera(), size, overlay(), 'wooden');
   render(b.ctx, d, defaultCamera(), size, overlay({ showConnectors: true }), 'wooden');
   expect(b.calls.length).toBeGreaterThan(a.calls.length);
+});
+
+test.each(['model', 'brick'] as const)('%s style draws bridges, tunnels and cars without wooden pegs', (sid) => {
+  const d = new Doc({ ...emptyLayout(), pieces: [P('b', 'bridge-2', 0, 0), P('t', 'tunnel-2', 4, 0)], trains: [train('x', T('b', 1), { cars: 1 })] });
+  const { ctx, calls } = mockContext();
+  render(ctx, d, defaultCamera(), size, overlay(), sid);
+  expect(calls.some((c) => c.fillStyle === '#c49a62' || c.strokeStyle === '#c49a62')).toBe(false);
+  expect(calls.some((c) => c.name === 'fill' && c.fillStyle === '#123456')).toBe(true);
+});
+
+test('brick studs are only drawn at high zoom', () => {
+  const draw = (scale: number) => {
+    const { ctx, calls } = mockContext();
+    (ctx as unknown as { getTransform: () => { a: number } }).getTransform = () => ({ a: scale });
+    STYLES.brick.background(ctx, { x: 0, y: 0 }, { x: 10, y: 10 }, false);
+    return calls.filter((c) => c.name === 'arc').length;
+  };
+  expect(draw(10)).toBe(0);
+  expect(draw(40)).toBeGreaterThan(0);
 });

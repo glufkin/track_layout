@@ -2,6 +2,8 @@ import type { Vec2 } from '../geom/vec';
 import type { Piece, StyleId, Train } from '../model/types';
 import type { CarPose } from '../sim/motion';
 import { WOODEN } from './styles/wooden';
+import { MODEL } from './styles/model';
+import { BRICK_STYLE } from './styles/brick';
 
 export { strokeRoute, connectorShape, traceRoute, tracePartialRoute, tracePolys, tint, pegCentre, PEG_R, PEG_REACH } from './draw';
 
@@ -22,12 +24,9 @@ export interface Style {
   car(ctx: CanvasRenderingContext2D, car: CarPose, train: Train): void;
 }
 
-/**
- * All styles by id. Task 12 adds the model and brick styles; until then they fall back to
- * wooden so every `StyleId` renders.
- */
+/** All styles by id. */
 export const STYLES: Record<StyleId, Style> = {
   wooden: WOODEN,
-  model: WOODEN,
-  brick: WOODEN,
+  model: MODEL,
+  brick: BRICK_STYLE,
 };

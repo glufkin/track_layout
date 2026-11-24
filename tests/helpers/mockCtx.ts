@@ -6,7 +6,7 @@ export interface Call {
 /** A Proxy canvas context: records every method call (with the paint state at that moment) and accepts any property. */
 export function mockContext(): { ctx: CanvasRenderingContext2D; calls: Call[] } {
   const calls: Call[] = [];
-  let state: Record<string | symbol, unknown> = { fillStyle: '#000000', strokeStyle: '#000000', globalAlpha: 1, lineWidth: 1 };
+  let state: Record<string | symbol, unknown> = { fillStyle: '#000000', strokeStyle: '#000000', globalAlpha: 1, lineWidth: 1, getTransform: () => ({ a: 40, b: 0, c: 0, d: 40, e: 0, f: 0 }) };
   const stack: Array<Record<string | symbol, unknown>> = [];
   // Whatever a method returns (gradients, etc.) accepts any further call.
   const anything = (): unknown => new Proxy(function () {}, { get: () => anything(), apply: () => anything() });

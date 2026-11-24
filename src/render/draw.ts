@@ -102,3 +102,25 @@ export function tint(color: string, amount: number): string {
   const ch = [0, 2, 4].map((i) => Math.round(parseInt(m!.slice(i, i + 2), 16) * (1 - a) + target * a));
   return '#' + ch.map((v) => v.toString(16).padStart(2, '0')).join('');
 }
+
+/**
+ * Approximate screen pixels per world unit, read from the current transform's x scale (the
+ * styles are not told the zoom). It includes devicePixelRatio, which is fine for the rough
+ * level-of-detail thresholds that use it. Returns 0 if the transform is unavailable.
+ */
+export function pixelsPerUnit(ctx: CanvasRenderingContext2D): number {
+  const a = ctx.getTransform?.().a;
+  return typeof a === 'number' && Number.isFinite(a) ? Math.abs(a) : 0;
+}
+
+/** A rectangle `along` × `across` centred at `c`, rotated to heading `h` degrees, added to the current path. */
+export function orientedRect(ctx: CanvasRenderingContext2D, c: Vec2, h: number, along: number, across: number): void {
+  const u = fromAngle(h), n = rightOf(h);
+  [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([a, b], i) => {
+    const x = c.x + (u.x * a * along + n.x * b * across) / 2, y = c.y + (u.y * a * along + n.y * b * across) / 2;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.closePath();
+}
+
+export { rightOf };

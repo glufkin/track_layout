@@ -218,4 +218,4 @@ function car(ctx: CanvasRenderingContext2D, c: CarPose, train: Train): void {
   ctx.restore();
 }
 
-export const WOODEN: Style = { id: 'wooden', name: 'Wooden toy', background, piece, tunnelCover, car };
+export const WOODEN: Style = { id: 'wooden', name: 'Wooden', background, piece, tunnelCover, car };

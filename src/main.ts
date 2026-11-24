@@ -4,7 +4,7 @@ import { applyPose } from './geom/vec';
 import { pieceConnectors } from './track/catalog';
 import { worldConnectors, worldFootprint } from './track/graph';
 import { Doc } from './model/doc';
-import { emptyLayout, type Piece, type Train } from './model/types';
+import { emptyLayout, type Piece, type StyleId, type Train } from './model/types';
 import { render, liftedCarPoses, type Overlay } from './render/renderer';
 import { defaultCamera, fitBounds } from './render/camera';
 
@@ -68,6 +68,8 @@ const doc = new Doc({
 });
 
 const params = new URLSearchParams(location.search);
+const styleParam = params.get('style');
+const styleId: StyleId = styleParam === 'model' || styleParam === 'brick' ? styleParam : 'wooden';
 const overlay: Overlay = { selectedPieces: new Set(), showConnectors: false };
 if (params.has('overlays')) {
   overlay.selectedPieces = new Set(['top1']);
@@ -103,7 +105,7 @@ function draw(): void {
     min = { x: Math.min(min.x, v.x), y: Math.min(min.y, v.y) };
     max = { x: Math.max(max.x, v.x), y: Math.max(max.y, v.y) };
   }
-  render(ctx, doc, fitBounds(defaultCamera(), size, min, max), size, overlay, 'wooden');
+  render(ctx, doc, fitBounds(defaultCamera(), size, min, max), size, overlay, styleId);
 }
 draw();
 window.addEventListener('resize', draw);
