@@ -40,11 +40,11 @@ function onPiece(id: string, route = 0, frac = 0.5): Vec2 {
 const panel = (): HTMLElement | null => document.querySelector<HTMLElement>('.tl-panel');
 const q = <T extends Element>(sel: string): T => panel()!.querySelector<T>(sel)!;
 
-/** A 2U straight with a 0-car train near its far end, selected (its panel open). */
-function trainOnStraight(): string {
+/** `n` 2U straights in a row with a 0-car train near the far end of the last, selected (its panel open). */
+function trainOnStraight(n = 1): string {
   app.input.mode = { kind: 'place', type: 'straight-2', flipped: false, attachIndex: 0, freeRot: 0 };
-  click({ x: 0, y: 0 });
-  const id = app.doc.layout.pieces[0].id;
+  for (let i = 0; i < n; i++) click({ x: 0, y: 0 });
+  const id = app.doc.layout.pieces[n - 1].id;
   app.input.mode = { kind: 'placeTrain', cars: 0, dir: 1 };
   click(onPiece(id, 0, 0.9));
   return app.doc.layout.trains[0].id;
@@ -94,11 +94,11 @@ test('speed slider and Reverse change the train without history', () => {
 });
 
 test('train panel car count and colour are undoable', () => {
-  const id = trainOnStraight();
+  const id = trainOnStraight(4);
   const cars = q<HTMLInputElement>('[data-action="cars"]');
-  cars.value = '25';
+  cars.value = '3';
   cars.dispatchEvent(new Event('change', { bubbles: true }));
-  expect(app.doc.train(id)!.cars).toBe(20);
+  expect(app.doc.train(id)!.cars).toBe(3);
   const color = q<HTMLInputElement>('[data-action="color"]');
   color.value = '#123456';
   color.dispatchEvent(new Event('change', { bubbles: true }));
@@ -108,6 +108,17 @@ test('train panel car count and colour are undoable', () => {
   app.undo();
   expect(app.doc.train(id)!.cars).toBe(0);
   expect(q<HTMLInputElement>('[data-action="cars"]').value).toBe('0');
+});
+
+test('a longer train that would not fit is refused and the input clamps back', () => {
+  const id = trainOnStraight(4);
+  const exec = vi.spyOn(app.history, 'exec');
+  const cars = q<HTMLInputElement>('[data-action="cars"]');
+  cars.value = '25'; // clamped to 20, which hangs far off the 8U line
+  cars.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(app.doc.train(id)!.cars).toBe(0);
+  expect(cars.value).toBe('0');
+  expect(exec).not.toHaveBeenCalled();
 });
 
 test('train panel Delete removes the train (undoable) and hides the panel', () => {

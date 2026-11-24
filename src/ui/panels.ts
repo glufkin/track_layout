@@ -1,6 +1,6 @@
 import type { Vec2 } from '../geom/vec';
 import { MAX_CARS } from '../model/types';
-import { deleteTrains, setSwitchMode, setTrainProps } from '../editor/commands';
+import { canPlaceTrain, deleteTrains, setSwitchMode, setTrainProps } from '../editor/commands';
 import { carPoses } from '../sim/motion';
 import { worldToScreen } from '../render/camera';
 import type { App } from './app';
@@ -111,7 +111,9 @@ export function showTrainPanel(app: App, trainId: string): void {
     const t = train();
     if (!t) return;
     const n = Math.round(Number(cars.value));
-    const count = Number.isFinite(n) ? Math.min(MAX_CARS, Math.max(0, n)) : t.cars;
+    let count = Number.isFinite(n) ? Math.min(MAX_CARS, Math.max(0, n)) : t.cars;
+    // A placed train may only grow if the longer train still fits behind its head.
+    if (count > t.cars && t.head !== null && !canPlaceTrain(app.doc, t.head, count)) count = t.cars;
     cars.value = String(count);
     if (count !== t.cars) app.exec(setTrainProps(trainId, { cars: count }));
   });
