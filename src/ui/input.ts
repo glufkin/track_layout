@@ -170,12 +170,13 @@ export class Input {
     } else if (this.cursor && m.kind === 'placeTrain') {
       const head = this.trainHead(m, this.cursor);
       if (head) {
+        const cars = this.placeTrainCars(m);
         const t: Train = {
-          id: 'ghost', cars: this.placeTrainCars(m), color: '#808080', speed: 0, running: false, head, lifted: null,
+          id: 'ghost', cars, color: '#808080', speed: 0, running: false, head, lifted: null,
           currentSpeed: 0, crashed: false, crashAt: null,
         };
         app.overlay.ghostTrain = carPoses(app.doc, t);
-        app.overlay.ghostTrainValid = canPlaceTrain(app.doc, head, this.placeTrainCars(m));
+        app.overlay.ghostTrainValid = canPlaceTrain(app.doc, head, cars);
       }
     }
     app.requestRender();
