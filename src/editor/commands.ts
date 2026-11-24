@@ -1,8 +1,11 @@
 import type { Doc } from '../model/doc';
-import type { Piece } from '../model/types';
+import type { Piece, Train, TrackPos } from '../model/types';
+import { pieceRoutes } from '../track/catalog';
+import { carPoses, distanceAhead, occupiedPieces, trainLength } from '../sim/motion';
+import { carsOverlap } from '../sim/collision';
 import type { Command } from './history';
 
-const clone = (p: Piece): Piece => structuredClone(p);
+const clone = <T>(p: T): T => structuredClone(p);
 
 /** Replace the pieces whose ids match a snapshot, in place in the array. */
 function restore(doc: Doc, snaps: Piece[]): void {
@@ -82,5 +85,132 @@ export function batch(label: string, cmds: Command[]): Command {
     label,
     do(doc) { for (const c of cmds) c.do(doc); doc.rebuild(); },
     undo(doc) { for (const c of [...cmds].reverse()) c.undo(doc); doc.rebuild(); },
+  };
+}
+
+// ---- Trains ----
+
+/** Overwrite the train with the snapshot's id in place (keeps object identity for other holders). */
+function restoreTrain(doc: Doc, snap: Train): void {
+  const t = doc.train(snap.id);
+  if (t) Object.assign(t, clone(snap));
+}
+
+const EPS = 1e-6;
+
+/** Does the head's piece and route exist, with room behind it for the whole train before a dead end? */
+export function canPlaceTrain(doc: Doc, head: TrackPos, cars: number): boolean {
+  const p = doc.piece(head.pieceId);
+  if (!p || !pieceRoutes(p.type, p.flipped)[head.route]) return false;
+  const len = trainLength(cars);
+  const back: TrackPos = { ...head, dir: head.dir === 1 ? -1 : 1 };
+  return distanceAhead(doc, back, len) >= len - EPS;
+}
+
+export function placeTrain(train: Train): Command {
+  const snap = clone(train);
+  return {
+    label: 'Place train',
+    do(doc) { doc.layout.trains.push(clone(snap)); },
+    undo(doc) { doc.layout.trains = doc.layout.trains.filter((t) => t.id !== snap.id); },
+  };
+}
+
+/** Drop a lifted train onto the track, or relocate a placed one; it lands stopped and un-crashed. */
+export function moveTrain(id: string, head: TrackPos): Command {
+  let before: Train | null = null;
+  return {
+    label: 'Move train',
+    do(doc) {
+      const t = doc.train(id);
+      if (!t) { before = null; return; }
+      before = clone(t);
+      Object.assign(t, {
+        head: { ...head }, lifted: null, running: false, currentSpeed: 0, crashed: false, crashAt: null,
+      });
+    },
+    undo(doc) { if (before) restoreTrain(doc, before); },
+  };
+}
+
+export function deleteTrains(ids: string[]): Command {
+  const idSet = new Set(ids);
+  let removed: { index: number; train: Train }[] = [];
+  return {
+    label: 'Delete train',
+    do(doc) {
+      removed = [];
+      doc.layout.trains.forEach((t, index) => { if (idSet.has(t.id)) removed.push({ index, train: clone(t) }); });
+      doc.layout.trains = doc.layout.trains.filter((t) => !idSet.has(t.id));
+    },
+    undo(doc) {
+      // ascending original indices: each insert lands at its final position
+      for (const r of removed) doc.layout.trains.splice(r.index, 0, clone(r.train));
+    },
+  };
+}
+
+export function setTrainProps(id: string, props: Partial<Pick<Train, 'cars' | 'color'>>): Command {
+  let before: Pick<Train, 'cars' | 'color'> | null = null;
+  return {
+    label: 'Train properties',
+    do(doc) {
+      const t = doc.train(id);
+      if (!t) { before = null; return; }
+      before = { cars: t.cars, color: t.color };
+      if (props.cars !== undefined) t.cars = props.cars;
+      if (props.color !== undefined) t.color = props.color;
+    },
+    undo(doc) {
+      const t = doc.train(id);
+      if (t && before) Object.assign(t, before);
+    },
+  };
+}
+
+/** Would `train` with its head at `head` overlap any other placed train? */
+function overlapsOthers(doc: Doc, train: Train, head: TrackPos): boolean {
+  const mine = carPoses(doc, { ...train, head });
+  return doc.layout.trains.some((o) => o.id !== train.id && o.head !== null
+    && carPoses(doc, o).some((c) => mine.some((m) => carsOverlap(m, c))));
+}
+
+/**
+ * Wrap a piece edit (spec §5.5a): before `inner.do`, every train on any of `pieceIds` is lifted at its
+ * locomotive's pose and stopped. Undo restores such trains (still lifted) to their old spot, stopped,
+ * when the track is back and no other train is in the way; otherwise they stay lifted.
+ */
+export function withLifting(doc: Doc, pieceIds: string[], inner: Command): Command {
+  void doc; // occupancy is computed at do time (also on redo), against the doc passed to `do`
+  const idSet = new Set(pieceIds);
+  let lifted: Train[] = [];
+  return {
+    label: inner.label,
+    do(d) {
+      lifted = [];
+      for (const t of d.layout.trains) {
+        if (t.head === null) continue;
+        if (![...occupiedPieces(d, t)].some((id) => idSet.has(id))) continue;
+        const loco = carPoses(d, t)[0];
+        lifted.push(clone(t));
+        Object.assign(t, {
+          head: null, lifted: { x: loco.center.x, y: loco.center.y, rot: loco.heading },
+          running: false, currentSpeed: 0,
+        });
+      }
+      inner.do(d);
+    },
+    undo(d) {
+      inner.undo(d);
+      for (const prior of lifted) {
+        const t = d.train(prior.id);
+        const head = prior.head;
+        if (!t || t.head !== null || head === null) continue;
+        if (!canPlaceTrain(d, head, t.cars) || overlapsOthers(d, t, head)) continue;
+        Object.assign(t, {
+          head: { ...head }, lifted: null, running: false, currentSpeed: 0, crashed: false, crashAt: null,
+        });
+      }
+    },
   };
 }
