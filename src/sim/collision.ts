@@ -33,8 +33,8 @@ export function carsOverlap(a: CarPose, b: CarPose): boolean {
 
 const radius = (c: CarPose): number => Math.hypot(c.length / 2, CAR_WIDTH / 2);
 
-interface Hit extends Collision { /** Loco heading of `a` and `b` and the centre of the other train's overlapping car. */
-  aHeadsToward: boolean; bHeadsToward: boolean }
+/** A colliding pair; `xHeadsToward` says whether train x's locomotive is travelling toward the other train's overlapping car. */
+interface Hit extends Collision { aHeadsToward: boolean; bHeadsToward: boolean }
 
 function findHits(doc: Doc): Hit[] {
   const placed = doc.layout.trains.filter((t) => t.head !== null).map((t) => ({ id: t.id, cars: carPoses(doc, t) }));
@@ -67,10 +67,11 @@ function firstOverlap(as: CarPose[], bs: CarPose[]): [CarPose, CarPose] | null {
   return null;
 }
 
-/** Is the other car ahead of this train's locomotive (in its direction of travel)? */
+/** Is the other car ahead of (or abreast of) this train's locomotive front, i.e. not behind it? */
 function headsToward(loco: CarPose, other: CarPose): boolean {
   const f = fromAngle(loco.heading);
-  return f.x * (other.center.x - loco.center.x) + f.y * (other.center.y - loco.center.y) > 0;
+  const fx = loco.center.x + f.x * loco.length / 2, fy = loco.center.y + f.y * loco.length / 2;
+  return f.x * (other.center.x - fx) + f.y * (other.center.y - fy) > -1e-9;
 }
 
 /** Overlapping train pairs among placed (non-lifted) trains, with the contact point. */
@@ -90,6 +91,8 @@ export function checkCollisions(doc: Doc): void {
     touching.add(h.a); touching.add(h.b);
     if (!on) continue;
     const ta = doc.train(h.a)!, tb = doc.train(h.b)!;
+    // Trains that both travel away from each other (e.g. both just reversed) are separating, not colliding.
+    if (!h.aHeadsToward && !h.bHeadsToward) continue;
     // A train released from a crash (e.g. reversed) still touches its old partner: it only crashes
     // again if it is heading into it.
     if (ta.crashed && !tb.crashed && !h.bHeadsToward) continue;

@@ -81,6 +81,30 @@ test('collisions off: trains pass through', () => {
   expect(a.crashed).toBe(false);
   expect(b.crashed).toBe(false);
   expect(a.running && b.running).toBe(true);
+  expect(carPoses(d, a)[0].center.x).toBeGreaterThan(carPoses(d, b)[0].center.x);
+});
+
+test('rear-end: a moving train drives into a stopped one and both crash', () => {
+  const a = train('a', T('s0', 1));
+  const b = train('b', T('s3', 0), { running: false });
+  const d = doc(line(), [a, b]);
+  run(new Simulation(d), 6);
+  expect(a.crashed && b.crashed).toBe(true);
+  expect(a.currentSpeed).toBe(0);
+});
+
+test('reversing both crashed trains lets them separate', () => {
+  const { d, a, b } = headOn();
+  const sim = new Simulation(d);
+  run(sim, 5);
+  expect(a.crashed && b.crashed).toBe(true);
+  sim.reverse('a'); sim.reverse('b');
+  a.running = true; b.running = true;
+  run(sim, 3);
+  expect(a.crashed || b.crashed).toBe(false);
+  expect(a.currentSpeed).toBeGreaterThan(0.5);
+  expect(b.currentSpeed).toBeGreaterThan(0.5);
+  expect(carPoses(d, a)[0].center.x).toBeLessThan(carPoses(d, b)[0].center.x - 3);
 });
 
 test('train on a bridge (level 1) does not collide with one below', () => {
