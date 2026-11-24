@@ -72,7 +72,11 @@ function connectorPairs(conns: WorldConnector[]): Cand[] {
 
 const cmpStr = (x: string, y: string): number => (x < y ? -1 : x > y ? 1 : 0);
 
-// ---- polygon intersection (footprints are simple, possibly non-convex) ----
+// ---- overlap: centreline clearance ----
+
+export const OVERLAP_CLEARANCE = 0.3;
+const MAX_STEP_U = 1 / 16;
+const MAX_STEP_DEG = 5;
 
 const cross = (o: Vec2, a: Vec2, b: Vec2): number => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
 
@@ -82,54 +86,41 @@ function distToSeg(p: Vec2, a: Vec2, b: Vec2): number {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
-/** Strictly inside: boundary points (within 1e-6) do not count. */
-function strictlyInside(pt: Vec2, poly: Vec2[]): boolean {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    if (distToSeg(pt, poly[j], poly[i]) < 1e-6) return false;
-    const a = poly[i], b = poly[j];
-    if ((a.y > pt.y) !== (b.y > pt.y) && pt.x < ((b.x - a.x) * (pt.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
-  }
-  return inside;
-}
-
-/** Proper crossing (interiors cross at a single point); touching and collinear do not count. */
-function segsCross(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): boolean {
+/** Distance between two segments: 0 if they intersect, else the smallest endpoint-to-segment distance. */
+function segSegDist(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): number {
   const d1 = cross(q1, q2, p1), d2 = cross(q1, q2, p2), d3 = cross(p1, p2, q1), d4 = cross(p1, p2, q2);
-  const e = 1e-9;
-  return ((d1 > e && d2 < -e) || (d1 < -e && d2 > e)) && ((d3 > e && d4 < -e) || (d3 < -e && d4 > e));
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return 0;
+  return Math.min(distToSeg(p1, q1, q2), distToSeg(p2, q1, q2), distToSeg(q1, p1, p2), distToSeg(q2, p1, p2));
 }
 
-interface Shape { id: string; polys: Vec2[][]; samples: Vec2[]; box: [number, number, number, number] }
+interface Shape { lines: Vec2[][]; box: [number, number, number, number] }
 
+/** Route centrelines as polylines sampled every <= 1/16U and <= 5 degrees of turn. */
 function makeShape(p: Piece): Shape {
-  const polys = worldFootprint(p);
+  const lines: Vec2[][] = [];
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const poly of polys) for (const v of poly) {
-    x0 = Math.min(x0, v.x); y0 = Math.min(y0, v.y); x1 = Math.max(x1, v.x); y1 = Math.max(y1, v.y);
-  }
-  // Route centreline samples catch stacked pieces whose band edges are collinear.
-  const samples: Vec2[] = [];
-  for (let r = 0; r < polys.length; r++) {
+  for (let r = 0; r < pieceRoutes(p.type, p.flipped).length; r++) {
     const path = worldRoutePath(p, r);
-    const n = Math.max(2, Math.ceil(path.length / 0.25));
-    for (let i = 0; i <= n; i++) samples.push(samplePath(path, (path.length * i) / n).pos);
+    const turn = path.segments.reduce((t, s) => t + (s.kind === 'arc' ? Math.abs(s.sweep) : 0), 0);
+    const n = Math.max(1, Math.ceil(path.length / MAX_STEP_U), Math.ceil(turn / MAX_STEP_DEG));
+    const pts: Vec2[] = [];
+    for (let i = 0; i <= n; i++) {
+      const v = samplePath(path, (path.length * i) / n).pos;
+      pts.push(v);
+      x0 = Math.min(x0, v.x); y0 = Math.min(y0, v.y); x1 = Math.max(x1, v.x); y1 = Math.max(y1, v.y);
+    }
+    lines.push(pts);
   }
-  return { id: p.id, polys, samples, box: [x0, y0, x1, y1] };
+  const m = OVERLAP_CLEARANCE;
+  return { lines, box: [x0 - m, y0 - m, x1 + m, y1 + m] };
 }
 
 function shapesOverlap(a: Shape, b: Shape): boolean {
   if (a.box[0] > b.box[2] || b.box[0] > a.box[2] || a.box[1] > b.box[3] || b.box[1] > a.box[3]) return false;
-  for (const pa of a.polys) for (const pb of b.polys) {
-    for (let i = 0; i < pa.length; i++) {
-      const p1 = pa[i], p2 = pa[(i + 1) % pa.length];
-      for (let j = 0; j < pb.length; j++) if (segsCross(p1, p2, pb[j], pb[(j + 1) % pb.length])) return true;
+  for (const la of a.lines) for (const lb of b.lines) {
+    for (let i = 0; i + 1 < la.length; i++) for (let j = 0; j + 1 < lb.length; j++) {
+      if (segSegDist(la[i], la[i + 1], lb[j], lb[j + 1]) < OVERLAP_CLEARANCE) return true;
     }
-  }
-  for (const pt of a.samples) for (const pb of b.polys) if (strictlyInside(pt, pb)) return true;
-  for (const pt of b.samples) for (const pa of a.polys) if (strictlyInside(pt, pa)) return true;
-  for (const [s, o] of [[a, b], [b, a]] as const) {
-    for (const poly of s.polys) for (const v of poly) for (const po of o.polys) if (strictlyInside(v, po)) return true;
   }
   return false;
 }
@@ -157,7 +148,7 @@ export function buildGraph(pieces: Piece[]): TrackGraph {
     nearMisses.push([c.a, c.b]);
   }
 
-  // Overlaps via a 1U spatial hash over footprint bounding boxes.
+  // Overlaps via a 1U spatial hash over centreline bounding boxes (padded by the clearance).
   const shapes = pieces.map(makeShape);
   const joinedPieces = new Set<string>();
   for (const [k, w] of joins) joinedPieces.add(k.slice(0, k.lastIndexOf(':')) + '|' + w.pieceId);

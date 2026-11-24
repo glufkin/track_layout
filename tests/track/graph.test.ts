@@ -1,7 +1,7 @@
 import { test, expect } from 'vitest';
 import { applyPose, type Pose } from '../../src/geom/vec';
-import { pieceConnectors } from '../../src/track/catalog';
-import { buildGraph, connKey } from '../../src/track/graph';
+import { pieceConnectors, D } from '../../src/track/catalog';
+import { buildGraph, connKey, OVERLAP_CLEARANCE } from '../../src/track/graph';
 import { Doc } from '../../src/model/doc';
 import { emptyLayout, type Piece } from '../../src/model/types';
 
@@ -56,6 +56,32 @@ test('crossing straights at same level overlap; at different levels they do not'
 test('stacked identical pieces overlap; a crossover does not overlap itself', () => {
   expect(buildGraph([P('a', 'straight-1', 0, 0), P('b', 'straight-1', 0, 0)]).overlaps).toHaveLength(1);
   expect(buildGraph([P('x', 'crossover-90', 0, 0)]).overlaps).toHaveLength(0);
+});
+test('passing loop is not an overlap', () => {
+  const F = (id: string, type: string, x: number, y: number, rot = 0): Piece =>
+    ({ id, type, x, y, rot, level: 0, flipped: true });
+  const pieces: Piece[] = [
+    P('sw1', 'switch', 0, 0), // main to (1,0); branch ends (1, 0.414) heading 45
+    F('c1', 'curve-m-45', 1, Math.SQRT2 - 1, 45),
+    P('m1', 'straight-2', 1, 0),
+    P('m2', 'straight-1', 3, 0),
+    P('p1', 'straight-1', 2, D),
+    F('c2', 'curve-m-45', 3, D, 0),
+    { id: 'sw2', type: 'switch', x: 5, y: 0, rot: 180, level: 0, flipped: true },
+  ];
+  const g = buildGraph(pieces);
+  expect(g.overlaps).toEqual([]);
+  expect(g.nearMisses).toEqual([]);
+  expect(g.open).toHaveLength(2); // only sw1 entry and sw2 entry remain open
+  expect(g.joins.size).toBe(14); // 16 connectors, all but the two entries joined
+});
+test('parallel straights 0.2U apart overlap; 0.5U apart do not', () => {
+  expect(buildGraph([P('a', 'straight-2', 0, 0), P('b', 'straight-2', 0, 0.2)]).overlaps).toEqual([['a', 'b']]);
+  expect(buildGraph([P('a', 'straight-2', 0, 0), P('b', 'straight-2', 0, 0.5)]).overlaps).toEqual([]);
+  expect(OVERLAP_CLEARANCE).toBe(0.3);
+});
+test('a piece stacked exactly on another overlaps (curve on curve)', () => {
+  expect(buildGraph([P('a', 'curve-m-45', 0, 0), P('b', 'curve-m-45', 0, 0)]).overlaps).toEqual([['a', 'b']]);
 });
 test('1000 pieces rebuild quickly', () => {
   const ps: Piece[] = [];
