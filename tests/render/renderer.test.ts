@@ -2,7 +2,7 @@ import { test, expect } from 'vitest';
 import { PALETTE_ORDER, getPieceDef } from '../../src/track/catalog';
 import { Doc } from '../../src/model/doc';
 import { emptyLayout, MAX_LEVEL, type Piece, type Train, type TrackPos } from '../../src/model/types';
-import { render, liftedCarPoses, type Overlay } from '../../src/render/renderer';
+import { render, liftedCarPoses, INVALID_TRAIN_COLOR, type Overlay } from '../../src/render/renderer';
 import { STYLES } from '../../src/render/style';
 import { defaultCamera } from '../../src/render/camera';
 import { LOCO_LEN, CAR_LEN, COUPLING } from '../../src/sim/motion';
@@ -153,4 +153,15 @@ test('brick studs are only drawn at high zoom', () => {
   };
   expect(draw(10)).toBe(0);
   expect(draw(40)).toBeGreaterThan(0);
+});
+
+test('an invalid train ghost is drawn in the invalid red', () => {
+  const ghostTrain = liftedCarPoses({ x: 1, y: -6, rot: 0 }, 0);
+  const fills = (valid: boolean): unknown[] => {
+    const { ctx, calls } = mockContext();
+    render(ctx, new Doc(emptyLayout()), defaultCamera(), size, overlay({ ghostTrain, ghostTrainValid: valid }), 'wooden');
+    return calls.filter((c) => c.name === 'fill' || c.name === 'fillRect').map((c) => c.fillStyle);
+  };
+  expect(fills(false)).toContain(INVALID_TRAIN_COLOR);
+  expect(fills(true)).not.toContain(INVALID_TRAIN_COLOR);
 });

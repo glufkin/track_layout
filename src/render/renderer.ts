@@ -14,6 +14,8 @@ export interface Overlay {
   selectedTrain?: string;
   ghost?: { piece: Piece; valid: boolean };
   ghostTrain?: CarPose[];
+  /** False when the ghost train could not be placed there (drawn red, like an invalid piece ghost). */
+  ghostTrainValid?: boolean;
   showConnectors: boolean;
 }
 
@@ -33,6 +35,8 @@ const GHOST_TRAIN: Train = {
   id: 'ghost', cars: 0, color: '#808080', speed: 0, running: false, head: null, lifted: null,
   currentSpeed: 0, crashed: false, crashAt: null,
 };
+export const INVALID_TRAIN_COLOR = '#e53935';
+const INVALID_GHOST_TRAIN: Train = { ...GHOST_TRAIN, color: INVALID_TRAIN_COLOR };
 
 /** Car poses for a lifted train: the loco centred on `pose`, cars laid straight behind it along its heading. */
 export function liftedCarPoses(pose: Pose, cars: number): CarPose[] {
@@ -257,7 +261,7 @@ export function render(
     for (const c of overlay.ghostTrain) {
       ctx.save();
       ctx.globalAlpha = GHOST_ALPHA;
-      style.car(ctx, c, GHOST_TRAIN);
+      style.car(ctx, c, overlay.ghostTrainValid === false ? INVALID_GHOST_TRAIN : GHOST_TRAIN);
       ctx.restore();
     }
   }

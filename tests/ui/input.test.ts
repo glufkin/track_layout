@@ -374,3 +374,15 @@ test('Tab is only intercepted while placing; Space only on the canvas or body', 
   app.input.mode = { kind: 'placeTrain', cars: 0, dir: 1 };
   expect(keyEvent('Tab', document.body).defaultPrevented).toBe(true);
 });
+
+test('placeTrain ghost is marked invalid where the train would not fit', () => {
+  place('straight-2');
+  click({ x: 0, y: 0 });
+  const id = app.doc.layout.pieces[0].id;
+  app.input.mode = { kind: 'placeTrain', cars: 0, dir: 1 };
+  canvas.dispatchEvent(pointer('pointermove', onPiece(id, 0, 0.1), { buttons: 0 }));
+  expect(app.overlay.ghostTrain).toBeDefined();
+  expect(app.overlay.ghostTrainValid).toBe(false);
+  canvas.dispatchEvent(pointer('pointermove', onPiece(id, 0, 0.9), { buttons: 0 }));
+  expect(app.overlay.ghostTrainValid).toBe(true);
+});

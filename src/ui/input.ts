@@ -154,6 +154,12 @@ export class Input {
     return nearestTrackPos(this.app.doc, this.toWorld(cursor), this.snapRadius, m.dir);
   }
 
+  /** Car count of the train being placed: the lifted selected train's, else the mode's. */
+  private placeTrainCars(m: Extract<Mode, { kind: 'placeTrain' }>): number {
+    const t = this.app.selectedTrain ? this.app.doc.train(this.app.selectedTrain) : undefined;
+    return t && t.head === null ? t.cars : m.cars;
+  }
+
   /** Recompute ghosts for the current mode and cursor. */
   private refresh(): void {
     const m = this._mode, app = this.app;
@@ -165,10 +171,11 @@ export class Input {
       const head = this.trainHead(m, this.cursor);
       if (head) {
         const t: Train = {
-          id: 'ghost', cars: m.cars, color: '#808080', speed: 0, running: false, head, lifted: null,
+          id: 'ghost', cars: this.placeTrainCars(m), color: '#808080', speed: 0, running: false, head, lifted: null,
           currentSpeed: 0, crashed: false, crashAt: null,
         };
         app.overlay.ghostTrain = carPoses(app.doc, t);
+        app.overlay.ghostTrainValid = canPlaceTrain(app.doc, head, this.placeTrainCars(m));
       }
     }
     app.requestRender();
@@ -245,7 +252,7 @@ export class Input {
     const head = this.trainHead(m, cursor);
     if (!head) return;
     const lifted = app.selectedTrain ? app.doc.train(app.selectedTrain) : undefined;
-    const cars = lifted && lifted.head === null ? lifted.cars : m.cars;
+    const cars = this.placeTrainCars(m);
     if (!canPlaceTrain(app.doc, head, cars)) return;
     let id: string;
     if (lifted && lifted.head === null) {
