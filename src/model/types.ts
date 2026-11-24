@@ -30,7 +30,7 @@ export const MAX_CARS = 20;
 
 export const emptyLayout = (): Layout => ({
   style: 'wooden',
-  settings: { collisions: true, hillEffect: true, gridVisible: true },
+  settings: { collisions: true, hillEffect: false, gridVisible: true },
   pieces: [],
   trains: [],
 });
