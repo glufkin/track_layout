@@ -16,7 +16,8 @@ export interface PieceDef {
   type: string; family: Family; label: string;
   connectors: ConnectorDef[]; routes: RouteDef[];
   switch?: { entry: number; routes: [number, number] };
-  footprint: Vec2[]; flippable: boolean;
+  /** One simple (possibly non-convex) polygon per route: the 0.5U-wide track band around it. */
+  footprint: Vec2[][]; flippable: boolean;
   ramp?: true; bridge?: true; tunnel?: true;
 }
 
@@ -49,7 +50,7 @@ function piece(
   extra.levelOffsets?.forEach((l, i) => { connectors[i].levelOffset = l; });
   const def: PieceDef = {
     type, family, label, connectors, routes,
-    footprint: bandHull(routes.map((r) => r.path)),
+    footprint: routes.map((r) => bandPolygon(r.path)),
     flippable: extra.flippable ?? false,
   };
   if (extra.switch) def.switch = extra.switch;
@@ -59,39 +60,28 @@ function piece(
   return def;
 }
 
-/**
- * Footprint: convex hull of points offset ±HALF_BAND either side of each route, sampled
- * every ≤1/16U. Convex so later overlap checks can use SAT directly; it slightly over-covers
- * the inside of curves and the wedge between switch branches.
- */
-function bandHull(paths: RoutePath[]): Vec2[] {
-  const pts: Vec2[] = [];
-  for (const p of paths) {
-    const n = Math.max(1, Math.ceil(p.length * 16));
-    for (let i = 0; i <= n; i++) {
-      const s = samplePath(p, (p.length * i) / n);
-      const h = (s.heading * Math.PI) / 180;
-      const nx = -Math.sin(h) * HALF_BAND, ny = Math.cos(h) * HALF_BAND;
-      pts.push({ x: s.pos.x + nx, y: s.pos.y + ny }, { x: s.pos.x - nx, y: s.pos.y - ny });
-    }
-  }
-  return convexHull(pts);
-}
+const MAX_STEP_U = 1 / 16;
+const MAX_STEP_DEG = 5;
 
-/** Andrew's monotone chain; returns the hull without collinear points. */
-function convexHull(points: Vec2[]): Vec2[] {
-  const ps = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
-  const cross = (o: Vec2, a: Vec2, b: Vec2) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-  const half = (list: Vec2[]) => {
-    const h: Vec2[] = [];
-    for (const p of list) {
-      while (h.length >= 2 && cross(h[h.length - 2], h[h.length - 1], p) <= 1e-12) h.pop();
-      h.push(p);
-    }
-    h.pop();
-    return h;
-  };
-  return [...half(ps), ...half([...ps].reverse())];
+/** Total absolute heading change along a path, in degrees. */
+const turnOf = (p: RoutePath): number =>
+  p.segments.reduce((t, s) => t + (s.kind === 'arc' ? Math.abs(s.sweep) : 0), 0);
+
+/**
+ * The track band around one route: outer-edge samples at +HALF_BAND (right of travel), then
+ * the inner-edge samples at -HALF_BAND in reverse. Sampled every <=1/16U and <=5° of turn.
+ */
+function bandPolygon(p: RoutePath): Vec2[] {
+  const n = Math.max(1, Math.ceil(p.length / MAX_STEP_U), Math.ceil(turnOf(p) / MAX_STEP_DEG));
+  const right: Vec2[] = [], left: Vec2[] = [];
+  for (let i = 0; i <= n; i++) {
+    const s = samplePath(p, (p.length * i) / n);
+    const h = (s.heading * Math.PI) / 180;
+    const nx = -Math.sin(h) * HALF_BAND, ny = Math.cos(h) * HALF_BAND;
+    right.push({ x: s.pos.x + nx, y: s.pos.y + ny });
+    left.push({ x: s.pos.x - nx, y: s.pos.y - ny });
+  }
+  return [...right, ...left.reverse()];
 }
 
 const line = (len: number, from = 0, to: number | null = 1): RouteSpec =>
@@ -156,4 +146,10 @@ export function pieceConnectors(type: string, flipped: boolean): ConnectorDef[] 
 /** Routes in local coordinates; flipped mirrors each path with `mirrorPath`. */
 export function pieceRoutes(type: string, flipped: boolean): RouteDef[] {
   return getPieceDef(type).routes.map((r) => ({ ...r, path: flipped ? mirrorPath(r.path) : r.path }));
+}
+
+/** Footprint band polygons in local coordinates; flipped mirrors y (and reverses winding). */
+export function pieceFootprint(type: string, flipped: boolean): Vec2[][] {
+  return getPieceDef(type).footprint.map((poly) =>
+    flipped ? poly.map((v) => ({ x: v.x, y: -v.y })).reverse() : poly.map((v) => ({ ...v })));
 }

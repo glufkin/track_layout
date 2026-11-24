@@ -2,7 +2,7 @@ import { test, expect } from 'vitest';
 import { type Pose, dist, angleDiff, normDeg, applyPose } from '../../src/geom/vec';
 import { pathEnd, samplePath } from '../../src/geom/path';
 import {
-  CATALOG, PALETTE_ORDER, D, R_M, R_S, R_L, getPieceDef, pieceConnectors, pieceRoutes,
+  CATALOG, PALETTE_ORDER, D, R_M, R_S, R_L, getPieceDef, pieceConnectors, pieceRoutes, pieceFootprint,
 } from '../../src/track/catalog';
 import { chain } from '../helpers/chain';
 
@@ -112,27 +112,54 @@ test('flags: ramp level offset, bridges, tunnels, buffer dead end', () => {
   expect(buf.routes).toEqual([expect.objectContaining({ from: 0, to: null })]);
   expect(buf.routes[0].path.length).toBe(0.5);
 });
-test('footprint contains every route sample and the 0.25U band around it', () => {
-  const inside = (poly: { x: number; y: number }[], p: { x: number; y: number }) => {
-    // convex polygon test: point on the same side of every edge
-    let sign = 0;
-    for (let i = 0; i < poly.length; i++) {
-      const a = poly[i], b = poly[(i + 1) % poly.length];
-      const cr = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-      if (Math.abs(cr) < 1e-9) continue;
-      if (sign === 0) sign = Math.sign(cr); else if (Math.sign(cr) !== sign) return false;
+/** Ray-casting point-in-polygon (works for non-convex simple polygons). */
+const inPoly = (poly: { x: number; y: number }[], p: { x: number; y: number }) => {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+};
+const offset = (r: { path: Parameters<typeof samplePath>[0] }, d: number, k: number) => {
+  const s = samplePath(r.path, d), h = (s.heading * Math.PI) / 180;
+  return { x: s.pos.x - Math.sin(h) * k, y: s.pos.y + Math.cos(h) * k };
+};
+test('footprint is one 0.5U band polygon per route', () => {
+  for (const type of Object.keys(CATALOG)) {
+    for (const flipped of [false, true]) {
+      const fp = pieceFootprint(type, flipped), routes = pieceRoutes(type, flipped);
+      expect(fp).toHaveLength(routes.length);
+      routes.forEach((r, ri) => {
+        for (let i = 0; i < 10; i++) {
+          const d = (r.path.length * (i + 0.5)) / 10;
+          for (const k of [-0.24, 0, 0.24]) expect(inPoly(fp[ri], offset(r, d, k))).toBe(true);
+          for (const k of [-0.3, 0.3]) expect(inPoly(fp[ri], offset(r, d, k))).toBe(false);
+        }
+        const s0 = samplePath(r.path, 0), h0 = (s0.heading * Math.PI) / 180;
+        const behind = { x: s0.pos.x - Math.cos(h0) * 0.05, y: s0.pos.y - Math.sin(h0) * 0.05 };
+        expect(inPoly(fp[ri], behind)).toBe(false); // nothing beyond the start
+      });
     }
-    return true;
-  };
-  for (const def of Object.values(CATALOG)) {
-    expect(def.footprint.length).toBeGreaterThanOrEqual(4);
-    for (const r of def.routes) {
-      for (let i = 0; i <= 10; i++) {
-        const s = samplePath(r.path, (r.path.length * i) / 10);
-        const n = { x: -Math.sin((s.heading * Math.PI) / 180), y: Math.cos((s.heading * Math.PI) / 180) };
-        for (const k of [-0.24, 0, 0.24]) expect(inside(def.footprint, { x: s.pos.x + n.x * k, y: s.pos.y + n.y * k })).toBe(true);
-      }
-    }
-    expect(inside(def.footprint, { x: 0, y: 0.4 })).toBe(false);
+  }
+  expect(pieceFootprint('curve-m-45', false)).toEqual(getPieceDef('curve-m-45').footprint);
+});
+test('footprint does not fill the wedge between branches or the gaps between crossover arms', () => {
+  const outsideAll = (type: string, p: { x: number; y: number }) =>
+    getPieceDef(type).footprint.every((poly) => !inPoly(poly, p));
+  expect(outsideAll('switch-y', { x: 0.95, y: 0 })).toBe(true);
+  expect(outsideAll('crossover-90', { x: 0.15, y: 0.35 })).toBe(true);
+  expect(outsideAll('switch', { x: 1.1, y: 0.1 })).toBe(true);
+});
+test('flipped switch branches left', () => {
+  expect(pieceConnectors('switch', true)[2].pos.y).toBeLessThan(0);
+  expect(pieceConnectors('switch', true)[2].heading).toBeCloseTo(-45);
+});
+test('crossover routes intersect at their midpoints', () => {
+  for (const [type, angle] of [['crossover-90', 90], ['crossover-45', 45]] as const) {
+    const [r0, r1] = getPieceDef(type).routes;
+    const a = samplePath(r0.path, r0.path.length / 2), b = samplePath(r1.path, r1.path.length / 2);
+    expect(dist(a.pos, b.pos)).toBeLessThan(1e-12);
+    expect(angleDiff(b.heading - a.heading, angle)).toBeLessThan(1e-9);
   }
 });
