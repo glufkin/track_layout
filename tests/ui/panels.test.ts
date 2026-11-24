@@ -227,3 +227,20 @@ test('while a train runs, the layout is autosaved every 5 s of frames', () => {
   expect(localStorage.getItem(AUTOSAVE_KEY)).toBeNull();
   app.dispose();
 });
+
+test('the Run/Stop label follows a running change made by the simulation', () => {
+  const id = trainOnStraight();
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { frames.push(cb); return frames.length; });
+  vi.stubGlobal('cancelAnimationFrame', () => {});
+  const run = q<HTMLButtonElement>('[data-action="run"]');
+  run.click();
+  expect(run.textContent).toMatch(/Stop/);
+  app.start();
+  frames.shift()!(0);
+  app.doc.train(id)!.running = false; // e.g. a crash stops it
+  frames.shift()!(16);
+  expect(run.textContent).toMatch(/Run/);
+  expect(run.getAttribute('aria-pressed')).toBe('false');
+  app.dispose();
+});

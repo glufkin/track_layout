@@ -11,7 +11,7 @@ import { getPieceDef } from '../track/catalog';
 import { Input } from './input';
 import { buildToolbar } from './toolbar';
 import { buildPalette } from './palette';
-import { hidePanels, positionPanels, showSwitchPanel, showTrainPanel } from './panels';
+import { framePanels, hidePanels, positionPanels, showSwitchPanel, showTrainPanel } from './panels';
 
 export const AUTOSAVE_DELAY_MS = 500;
 /** While a train runs, its moving position is autosaved at most this often. */
@@ -239,6 +239,7 @@ export class App {
       try {
         if (dt > 0) this.sim.step(dt);
         this.playAutosave(time);
+        framePanels(this);
         this.draw();
       } catch (e) {
         console.error('Frame failed:', e); // keep the loop alive; the next frame may well succeed

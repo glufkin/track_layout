@@ -22,6 +22,8 @@ interface Panel {
   sync: () => void;
   /** The object's world point the panel sits next to, or null if it no longer exists. */
   anchor: () => Vec2 | null;
+  /** Called every animation frame: a cheap check that re-syncs if the simulation changed the object. */
+  frame?: () => void;
 }
 
 let current: Panel | null = null;
@@ -154,7 +156,11 @@ export function showTrainPanel(app: App, trainId: string): void {
     if (t.head !== null) return carPoses(app.doc, t)[0]?.center ?? null;
     return t.lifted ? { x: t.lifted.x, y: t.lifted.y } : null;
   };
-  mount({ app, kind: 'train', id: trainId, el, sync, anchor });
+  const frame = (): void => {
+    const t = train();
+    if (t && (run.getAttribute('aria-pressed') !== String(t.running) || speed.disabled !== (t.head === null))) sync();
+  };
+  mount({ app, kind: 'train', id: trainId, el, sync, anchor, frame });
 }
 
 /** The floating panel of a switch (spec §5.6): manual / auto mode. */
@@ -185,6 +191,11 @@ export function showSwitchPanel(app: App, pieceId: string): void {
     return p ? { x: p.x, y: p.y } : null;
   };
   mount({ app, kind: 'switch', id: pieceId, el, sync, anchor });
+}
+
+/** Per-frame hook: let the open panel follow simulation-made changes (e.g. a crash stopping a train). */
+export function framePanels(app: App): void {
+  if (current && current.app === app) current.frame?.();
 }
 
 export function hidePanels(): void {
