@@ -7,9 +7,11 @@ import { deserialize, loadAutosave, saveAutosave, serialize } from '../io/serial
 import { type Camera, defaultCamera, fitBounds } from '../render/camera';
 import { render, type Overlay } from '../render/renderer';
 import { worldFootprint } from '../track/graph';
+import { getPieceDef } from '../track/catalog';
 import { Input } from './input';
 import { buildToolbar } from './toolbar';
 import { buildPalette } from './palette';
+import { hidePanels, positionPanels, showSwitchPanel, showTrainPanel } from './panels';
 
 export const AUTOSAVE_DELAY_MS = 500;
 
@@ -63,6 +65,7 @@ export class App {
     this.input = new Input(this, this.canvas);
     buildToolbar(this, toolbar);
     buildPalette(this, palette);
+    this.onChange(() => this.syncPanels());
 
     const onResize = (): void => this.requestRender();
     window.addEventListener('resize', onResize);
@@ -109,6 +112,16 @@ export class App {
   changed(): void {
     this.scheduleAutosave();
     this.notify();
+  }
+
+  /** Show the train panel for the selected train, the switch panel for a lone selected switch, else none. */
+  private syncPanels(): void {
+    if (this.selectedTrain && this.doc.train(this.selectedTrain)) { showTrainPanel(this, this.selectedTrain); return; }
+    if (this.selection.size === 1) {
+      const p = this.doc.piece([...this.selection][0]);
+      if (p && getPieceDef(p.type).switch) { showSwitchPanel(this, p.id); return; }
+    }
+    hidePanels();
   }
 
   private scheduleAutosave(): void {
@@ -209,6 +222,7 @@ export class App {
     this.frame = null;
     if (this.autosaveTimer !== null) clearTimeout(this.autosaveTimer);
     this.input.dispose();
+    hidePanels();
     for (const d of this.disposers) d();
   }
 
@@ -241,5 +255,6 @@ export class App {
       ctx.strokeRect(Math.min(a.x, b.x) + 0.5, Math.min(a.y, b.y) + 0.5, Math.abs(a.x - b.x), Math.abs(a.y - b.y));
       ctx.restore();
     }
+    positionPanels(this); // follow a moving train
   }
 }
