@@ -20,7 +20,11 @@ export function placePieces(pieces: Piece[]): Command {
   return {
     label: 'Place',
     do(doc) { doc.layout.pieces.push(...snaps.map(clone)); doc.rebuild(); },
-    undo(doc) { doc.layout.pieces = doc.layout.pieces.filter((p) => !ids.has(p.id)); doc.rebuild(); },
+    undo(doc) {
+      liftTrainsOn(doc, ids);
+      doc.layout.pieces = doc.layout.pieces.filter((p) => !ids.has(p.id));
+      doc.rebuild();
+    },
   };
 }
 
@@ -40,9 +44,14 @@ export function transformPieces(
           return n ? { ...clone(p), x: n.x, y: n.y, rot: n.rot, flipped: n.flipped ?? p.flipped } : clone(p);
         });
       }
+      liftTrainsOn(doc, ids);
       restore(doc, after);
     },
-    undo(doc) { if (before) restore(doc, before); },
+    undo(doc) {
+      if (!before) return;
+      liftTrainsOn(doc, ids);
+      restore(doc, before);
+    },
   };
 }
 
@@ -52,6 +61,7 @@ export function deletePieces(ids: string[]): Command {
   return {
     label: 'Delete',
     do(doc) {
+      liftTrainsOn(doc, idSet);
       removed = [];
       doc.layout.pieces.forEach((p, index) => { if (idSet.has(p.id)) removed.push({ index, piece: clone(p) }); });
       doc.layout.pieces = doc.layout.pieces.filter((p) => !idSet.has(p.id));
@@ -176,6 +186,27 @@ function overlapsOthers(doc: Doc, train: Train, head: TrackPos): boolean {
 }
 
 /**
+ * Lift (at the locomotive's pose, stopped) every placed train occupying any of `pieceIds`, and
+ * return snapshots of them as they were. Call it BEFORE removing or moving those pieces — in every
+ * do, undo and redo that does so — so no train is ever left pointing at a missing or moved piece.
+ */
+export function liftTrainsOn(doc: Doc, pieceIds: Iterable<string>): Train[] {
+  const idSet = new Set(pieceIds);
+  const lifted: Train[] = [];
+  for (const t of doc.layout.trains) {
+    if (t.head === null) continue;
+    if (![...occupiedPieces(doc, t)].some((id) => idSet.has(id))) continue;
+    const loco = carPoses(doc, t)[0];
+    lifted.push(clone(t));
+    Object.assign(t, {
+      head: null, lifted: { x: loco.center.x, y: loco.center.y, rot: loco.heading },
+      running: false, currentSpeed: 0,
+    });
+  }
+  return lifted;
+}
+
+/**
  * Wrap a piece edit (spec §5.5a): before `inner.do`, every train on any of `pieceIds` is lifted at its
  * locomotive's pose and stopped. Undo restores such trains (still lifted) to their old spot, stopped,
  * when the track is back and no other train is in the way; otherwise they stay lifted.
@@ -187,17 +218,7 @@ export function withLifting(doc: Doc, pieceIds: string[], inner: Command): Comma
   return {
     label: inner.label,
     do(d) {
-      lifted = [];
-      for (const t of d.layout.trains) {
-        if (t.head === null) continue;
-        if (![...occupiedPieces(d, t)].some((id) => idSet.has(id))) continue;
-        const loco = carPoses(d, t)[0];
-        lifted.push(clone(t));
-        Object.assign(t, {
-          head: null, lifted: { x: loco.center.x, y: loco.center.y, rot: loco.heading },
-          running: false, currentSpeed: 0,
-        });
-      }
+      lifted = liftTrainsOn(d, idSet);
       inner.do(d);
     },
     undo(d) {

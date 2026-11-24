@@ -2,11 +2,13 @@ import { test, expect } from 'vitest';
 import { History } from '../../src/editor/history';
 import {
   placeTrain, moveTrain, deleteTrains, setTrainProps, canPlaceTrain, withLifting,
-  deletePieces, transformPieces,
+  deletePieces, transformPieces, placePieces,
 } from '../../src/editor/commands';
 import { Doc } from '../../src/model/doc';
 import { emptyLayout, type Piece, type Train, type TrackPos } from '../../src/model/types';
 import { carPoses } from '../../src/sim/motion';
+import { Simulation } from '../../src/sim/simulation';
+import { deserialize, serialize } from '../../src/io/serialize';
 
 const P = (id: string, type: string, x: number, y: number, rot = 0): Piece =>
   ({ id, type, x, y, rot, level: 0, flipped: false });
@@ -182,4 +184,63 @@ test('deleteTrains undo reinserts at original indices', () => {
   expect(d.layout.trains.map((t) => t.id)).toEqual(['a', 'b', 'c', 'd']);
   h.redo(d);
   expect(d.layout.trains.map((t) => t.id)).toEqual(['a', 'c']);
+});
+
+// ---- C1: undo/redo of a piece edit must lift trains on the affected pieces ----
+
+test('undoing a placement lifts a train that drove onto the placed piece', () => {
+  const d = new Doc({ ...emptyLayout(), pieces: [P('p1', 'straight-2', 0, 0)], trains: [] });
+  const h = new History();
+  h.exec(placeTrain(train('t1', T('p1', 1.2), { speed: 2 })), d);
+  h.exec(placePieces([P('p2', 'straight-2', 2, 0)]), d);
+  const sim = new Simulation(d);
+  for (let i = 0; i < 20; i++) sim.step(0.1);
+  expect(d.train('t1')!.head!.pieceId).toBe('p2');
+  h.undo(d);
+  const t = d.train('t1')!;
+  expect(t.head).toBeNull();
+  expect(t.lifted).not.toBeNull();
+  expect(t.running).toBe(false);
+  expect(() => sim.step(0.016)).not.toThrow();
+  expect(deserialize(serialize(d.layout)).ok).toBe(true);
+  // Repeated redo/undo keeps it consistently lifted.
+  h.redo(d); h.undo(d); h.redo(d);
+  expect(d.train('t1')!.head).toBeNull();
+  expect(() => sim.step(0.016)).not.toThrow();
+});
+
+test('undoing a transform lifts a train that drove onto the moved piece after the edit', () => {
+  const d = doc([]);
+  const h = new History();
+  h.exec(withLifting(d, ['s4'], transformPieces(['s4'], new Map([['s4', { x: 8, y: 5, rot: 0 }]]))), d);
+  // Train arrives on s4 only after the edit.
+  d.layout.trains.push(train('a', T('s4', 1)));
+  h.undo(d);
+  expect(d.train('a')!.head).toBeNull();
+  expect(d.train('a')!.lifted).not.toBeNull();
+  d.layout.trains.push(train('b', T('s4', 1)));
+  h.redo(d);
+  expect(d.train('b')!.head).toBeNull();
+});
+
+test('redoing a delete lifts a train that drove onto the piece after the undo', () => {
+  const d = doc([]);
+  const h = new History();
+  h.exec(deletePieces(['s4']), d);
+  h.undo(d);
+  d.layout.trains.push(train('a', T('s4', 1)));
+  h.redo(d);
+  expect(d.piece('s4')).toBeUndefined();
+  expect(d.train('a')!.head).toBeNull();
+  expect(deserialize(serialize(d.layout)).ok).toBe(true);
+});
+
+test('a train spanning onto an un-placed piece is lifted (tail on it)', () => {
+  const d = new Doc({ ...emptyLayout(), pieces: [P('p1', 'straight-2', 0, 0)], trains: [] });
+  const h = new History();
+  h.exec(placePieces([P('p2', 'straight-2', 2, 0)]), d);
+  // Head on p1 facing -x: the 1-car train's tail (length 1.9) reaches back onto p2.
+  d.layout.trains.push(train('a', T('p1', 0.5, -1), { cars: 1 }));
+  h.undo(d);
+  expect(d.train('a')!.head).toBeNull();
 });
