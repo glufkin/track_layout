@@ -3,7 +3,7 @@ import { type Pose, dist, angleDiff } from '../../src/geom/vec';
 import { D, validFlex } from '../../src/track/catalog';
 import { JOIN_POS_TOL, JOIN_ANGLE_TOL, buildGraph } from '../../src/track/graph';
 import { type PieceSpec, attachSpec, outPose, chainEnd, specToPiece } from '../../src/sketch/spec';
-import { solveJoin, JOIN_MAX_PIECES } from '../../src/sketch/join';
+import { solveJoin, JOIN_MAX_PIECES, MIN_ARC_SWEEP } from '../../src/sketch/join';
 
 const closesOn = (chain: PieceSpec[], to: Pose) => {
   const e = chainEnd(chain);
@@ -149,4 +149,22 @@ test('gentle bends of every sort within reach are solved', () => {
     expect(c, `lat ${lat} dh ${dh}`).not.toBeNull();
     closesOn(c!, to);
   }
+});
+
+test('solveJoin never lays a flex curve flatter than MIN_ARC_SWEEP', () => {
+  const r = rng(777);
+  let curves = 0;
+  for (let i = 0; i < 300; i++) {
+    const from = { x: 0, y: 0, rot: 0 };
+    const d = 1 + r() * 5, a = (r() - 0.5) * Math.PI;
+    // Near-straight targets with tiny heading errors are where a biarc produces vanishing arcs.
+    const to = { x: d * Math.cos(a), y: d * Math.sin(a), rot: 180 + (r() < 0.5 ? (r() - 0.5) * 1e-4 : (r() - 0.5) * 90) };
+    const c = solveJoin(from, to, 0);
+    if (!c) continue;
+    for (const s of c) if (s.type === 'flex-curve') {
+      curves++;
+      expect((s.flex as { sweep: number }).sweep).toBeGreaterThanOrEqual(MIN_ARC_SWEEP);
+    }
+  }
+  expect(curves).toBeGreaterThan(0);
 });

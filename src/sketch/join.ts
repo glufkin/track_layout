@@ -14,6 +14,11 @@ const STRAIGHTS: Array<[string, number]> = [['straight-2', 2], ['straight-1', 1]
 /** An arc flatter than this (with a radius beyond the flex limit) is laid as a flex straight. */
 const FLAT_SWEEP = 0.5;
 const MAX_ARC_SWEEP = FLEX_LIMITS.maxSweep;
+/**
+ * Flex curves flatter than this (degrees) are never laid: an arc this flat within the radius
+ * limit is under 0.0014U long, so it is dropped and the laid chain's closure check decides.
+ */
+export const MIN_ARC_SWEEP = 0.01;
 /** Tangent-length ratios d2/d1 tried for the biarc, equal lengths first. */
 const RATIOS = [1, 2 / 3, 3 / 2, 1 / 2, 2, 1 / 3, 3, 1 / 5, 5];
 
@@ -77,6 +82,7 @@ function arcParts(a: Vec2, h: number, b: Vec2): Part[] | null {
     return Array.from({ length: n }, () => ({ type: 'flex-straight', flipped: false, flex: { length: chord / n } }));
   }
   if (radius < R_S - EPS) return null;
+  if (abs < MIN_ARC_SWEEP) return [];
   // Rounding may leave a sweep a hair over 45° (or a radius a hair under R_S): clamp it; the laid chain is checked anyway.
   const n = Math.max(1, Math.ceil((abs - SNAP) / MAX_ARC_SWEEP));
   const r = Math.max(radius, R_S), each = Math.min(abs / n, MAX_ARC_SWEEP);

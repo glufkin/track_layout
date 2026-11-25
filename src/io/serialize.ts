@@ -1,5 +1,5 @@
 import { emptyLayout, MAX_CARS, MAX_LEVEL, type Layout, type Piece, type StyleId, type Train } from '../model/types';
-import { CATALOG, getPieceDef, pieceGeometry, validFlex, type FlexParams } from '../track/catalog';
+import { CATALOG, FLEX_LIMITS, getPieceDef, pieceGeometry, validFlex, type FlexParams } from '../track/catalog';
 
 export const FORMAT = 'track-layout';
 export const VERSION = 2;
@@ -9,8 +9,38 @@ export const AUTOSAVE_REJECTED_KEY = 'track-layout:autosave-rejected';
 
 const STYLES: StyleId[] = ['wooden', 'model', 'brick'];
 const r6 = (n: number): number => Math.round(n * 1e6) / 1e6;
+const L = FLEX_LIMITS;
+/** Smallest positive value r6 can write: the floor for a written sweep (which must stay > 0). */
+const R6_STEP = 1e-6;
+/** Flex values this close outside a limit are read as the limit (they are rounding, not bad data). */
+const FLEX_SLACK = 1e-6;
+/** r6, but rounded *into* [lo, hi] (up at the bottom, down at the top) so a value at a limit stays valid. */
+const r6In = (n: number, lo: number, hi: number): number => {
+  const v = r6(n);
+  if (v < lo) return Math.ceil(lo * 1e6) / 1e6;
+  if (v > hi) return Math.floor(hi * 1e6) / 1e6;
+  return v;
+};
 const writeFlex = (f: FlexParams): FlexParams =>
-  ('length' in f ? { length: r6(f.length) } : { radius: r6(f.radius), sweep: r6(f.sweep) });
+  ('length' in f
+    ? { length: r6In(f.length, L.minLength, L.maxLength) }
+    : { radius: r6In(f.radius, L.minRadius, L.maxRadius), sweep: r6In(f.sweep, R6_STEP, L.maxSweep) });
+/** Snap a value within FLEX_SLACK of [lo, hi] onto the nearer limit; anything further out is left for validFlex to reject. */
+const snapIn = (v: unknown, lo: number, hi: number): unknown => {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return v;
+  if (Math.abs(v - lo) <= FLEX_SLACK) return lo;
+  if (Math.abs(v - hi) <= FLEX_SLACK) return hi;
+  return v;
+};
+/** Read-side tolerance: a raw flex object with its values snapped onto nearby limits (other shapes pass through). */
+function readFlex(raw: unknown): unknown {
+  if (!isObj(raw)) return raw;
+  const out: Obj = { ...raw };
+  if ('length' in raw) out.length = snapIn(raw.length, L.minLength, L.maxLength);
+  if ('radius' in raw) out.radius = snapIn(raw.radius, L.minRadius, L.maxRadius);
+  if ('sweep' in raw) out.sweep = snapIn(raw.sweep, Infinity, L.maxSweep);
+  return out;
+}
 
 export function serialize(layout: Layout): string {
   const data = {
@@ -76,10 +106,11 @@ function readPiece(raw: unknown, n: number): Piece {
   }
   const flexKind = getPieceDef(type).flex;
   if (flexKind) {
-    if (!validFlex(type, raw.flex as FlexParams | undefined)) {
+    const flex = readFlex(raw.flex);
+    if (!validFlex(type, flex as FlexParams | undefined)) {
       fail(`${where}: ${type} needs a flex field with valid ${flexKind === 'straight' ? 'length' : 'radius and sweep'}`);
     }
-    const f = raw.flex as Record<string, number>;
+    const f = flex as Record<string, number>;
     piece.flex = flexKind === 'straight' ? { length: f.length } : { radius: f.radius, sweep: f.sweep };
   } else if (raw.flex !== undefined) {
     fail(`${where}: flex field on a piece that is not a flex type`);

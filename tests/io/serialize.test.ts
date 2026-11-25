@@ -3,6 +3,7 @@ import { emptyLayout, type Layout, type Piece, type Train } from '../../src/mode
 import {
   AUTOSAVE_KEY, AUTOSAVE_REJECTED_KEY, FORMAT, VERSION, deserialize, loadAutosave, saveAutosave, serialize,
 } from '../../src/io/serialize';
+import { R_S, validFlex } from '../../src/track/catalog';
 
 const piece = (id: string, type = 'straight-1', extra: Partial<Piece> = {}): Piece =>
   ({ id, type, x: 0, y: 0, rot: 0, level: 0, flipped: false, ...extra });
@@ -68,6 +69,31 @@ describe('serialize', () => {
     const out = JSON.parse(serialize(l)).pieces;
     expect(out[0].flex).toEqual({ radius: 0.666667, sweep: 3.333333 });
     expect('flex' in out[1]).toBe(false);
+  });
+
+  test('flex curves at the limits round-trip (radius R_S and 8, sweep 45 and tiny)', () => {
+    for (const flex of [
+      { radius: R_S, sweep: 45 }, { radius: 8, sweep: 45 }, { radius: R_S, sweep: 1e-7 }, { radius: 8 - 1e-9, sweep: 45 + 1e-9 },
+    ]) {
+      const l = emptyLayout();
+      l.pieces.push(piece('f1', 'flex-curve', { flex }), piece('f2', 'flex-straight', { flex: { length: 0.05 } }));
+      const r = deserialize(serialize(l));
+      if (!r.ok) throw new Error(JSON.stringify(flex) + ': ' + r.error);
+      const f = r.layout.pieces[0].flex as { radius: number; sweep: number };
+      expect(validFlex('flex-curve', f)).toBe(true);
+      expect(Math.abs(f.radius - flex.radius)).toBeLessThan(1e-6);
+      expect(Math.abs(f.sweep - flex.sweep)).toBeLessThan(1e-6);
+    }
+  });
+
+  test('flex values within 1e-6 outside a limit load, clamped to the limit', () => {
+    const r = deserialize(file({ version: 2, pieces: [
+      { ...goodPiece, id: 'a', type: 'flex-curve', flex: { radius: 0.585786, sweep: 45.0000005 } },
+      { ...goodPiece, id: 'b', type: 'flex-straight', flex: { length: 4.0000004 } },
+    ] }));
+    if (!r.ok) throw new Error(r.error);
+    expect(r.layout.pieces[0].flex).toEqual({ radius: R_S, sweep: 45 });
+    expect(r.layout.pieces[1].flex).toEqual({ length: 4 });
   });
 
   test('v1 file still loads', () => {
