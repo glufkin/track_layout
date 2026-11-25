@@ -20,7 +20,9 @@ function drawThumb(canvas: HTMLCanvasElement, type: string, styleId: StyleId): v
   const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
   canvas.width = Math.round(THUMB_W * dpr);
   canvas.height = Math.round(THUMB_H * dpr);
-  const piece: Piece = { id: 'thumb', type, x: 0, y: 0, rot: 0, level: 0, flipped: false };
+  // Diagonal straights are shown at 45° (rising to the right) so they read differently from plain straights.
+  const rot = type.startsWith('straight-d') ? -45 : 0;
+  const piece: Piece = { id: 'thumb', type, x: 0, y: 0, rot, level: 0, flipped: false };
   if (CATALOG[type].switch) piece.switch = { mode: 'manual', state: 0 };
   const pts = worldFootprint(piece).flat();
   const minX = Math.min(...pts.map((p) => p.x)), maxX = Math.max(...pts.map((p) => p.x));
