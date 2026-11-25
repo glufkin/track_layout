@@ -165,3 +165,22 @@ test('an invalid train ghost is drawn in the invalid red', () => {
   expect(fills(false)).toContain(INVALID_TRAIN_COLOR);
   expect(fills(true)).not.toContain(INVALID_TRAIN_COLOR);
 });
+
+test.each(STYLE_IDS)('flex pieces render in both flips (%s)', (sid) => {
+  const { ctx } = mockContext();
+  const pieces = [
+    P('a', 'flex-straight', 0, 0, { flex: { length: 2 } }), P('b', 'flex-straight', 0, 3, { flex: { length: 0.3 }, flipped: true }),
+    P('c', 'flex-curve', 5, 0, { flex: { radius: 3, sweep: 30 } }), P('d', 'flex-curve', 5, 5, { flex: { radius: 2, sweep: 45 }, flipped: true }),
+  ];
+  expect(() => render(ctx, new Doc({ ...emptyLayout(), pieces }), defaultCamera(), size, overlay(), sid)).not.toThrow();
+});
+
+test('wooden flex pieces get a joint line across the band at each end', () => {
+  const strokes = (type: string, extra: Partial<Piece>): number => {
+    const { ctx, calls } = mockContext();
+    STYLES.wooden.piece(ctx, P('x', type, 0, 0, extra), {});
+    return calls.filter((c) => c.name === 'stroke').length;
+  };
+  expect(strokes('flex-straight', { flex: { length: 1 } })).toBeGreaterThanOrEqual(strokes('straight-1', {}) + 2);
+  expect(strokes('flex-curve', { flex: { radius: 2.5, sweep: 22.5 } })).toBeGreaterThanOrEqual(strokes('curve-m-45', {}) + 2);
+});

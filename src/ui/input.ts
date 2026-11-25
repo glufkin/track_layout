@@ -2,7 +2,7 @@ import { type Pose, type Vec2, dist, normDeg, rotate, sub } from '../geom/vec';
 import { samplePath } from '../geom/path';
 import { Doc } from '../model/doc';
 import type { Piece, TrackPos, Train } from '../model/types';
-import { getPieceDef, pieceGeometry } from '../track/catalog';
+import { FLEX_DEFAULTS, getPieceDef, pieceGeometry, type FlexType } from '../track/catalog';
 import { type WorldConnector, connKey, worldFootprint, worldRoutePath } from '../track/graph';
 import { computeGhost, posesAfterGroup, snapGroup, ROT_STEP, type GhostResult } from '../editor/snapping';
 import {
@@ -147,6 +147,7 @@ export class Input {
   private ghostPiece(m: Extract<Mode, { kind: 'place' }>, g: GhostResult, id: string): Piece {
     const p: Piece = { id, type: m.type, x: g.pose.x, y: g.pose.y, rot: g.pose.rot, level: g.level, flipped: m.flipped };
     if (getPieceDef(m.type).switch) p.switch = { mode: 'manual', state: 0 };
+    if (getPieceDef(m.type).flex) p.flex = { ...FLEX_DEFAULTS[m.type as FlexType] };
     return p;
   }
 

@@ -120,6 +120,19 @@ function piece(ctx: CanvasRenderingContext2D, p: Piece, _opts: PieceDrawOpts): v
   ctx.strokeStyle = GROOVE;
   for (const path of paths) for (const off of [-GROOVE_OFF, GROOVE_OFF]) strokeRoute(ctx, path, GROOVE_W, off);
 
+  if (def.flex) {
+    // Flex pieces are cut to length, so mark each end with a darker joint line across the band.
+    ctx.strokeStyle = BAND_EDGE;
+    ctx.lineWidth = 0.03;
+    for (const path of paths) for (const d of [0.02, path.length - 0.02]) {
+      const s = samplePath(path, d), r = rightOf(s.heading);
+      ctx.beginPath();
+      ctx.moveTo(s.pos.x - r.x * BAND_W / 2, s.pos.y - r.y * BAND_W / 2);
+      ctx.lineTo(s.pos.x + r.x * BAND_W / 2, s.pos.y + r.y * BAND_W / 2);
+      ctx.stroke();
+    }
+  }
+
   if (def.ramp) {
     // Ramps blend between the levels: lighter toward the high end.
     const a = samplePath(paths[0], 0).pos, b = samplePath(paths[0], paths[0].length).pos;

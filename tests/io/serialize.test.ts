@@ -81,6 +81,7 @@ describe('serialize', () => {
     ['flex field on straight-1', { ...goodPiece, flex: { length: 1 } }],
     ['flex-straight without flex', { ...goodPiece, type: 'flex-straight' }],
     ['flex-straight with curve params', { ...goodPiece, type: 'flex-straight', flex: { radius: 2, sweep: 10 } }],
+    ['flex an array', { ...goodPiece, type: 'flex-straight', flex: [1] }],
     ['flex not an object', { ...goodPiece, type: 'flex-straight', flex: 1 }],
   ])('rejects bad flex: %s', (_, p) => {
     const r = deserialize(file({ version: 2, pieces: [p] }));

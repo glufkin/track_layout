@@ -5,6 +5,7 @@ import type { Vec2 } from '../../src/geom/vec';
 import { samplePath } from '../../src/geom/path';
 import { worldRoutePath } from '../../src/track/graph';
 import { worldToScreen } from '../../src/render/camera';
+import { R_M } from '../../src/track/catalog';
 import { AUTOSAVE_KEY } from '../../src/io/serialize';
 
 let app: App;
@@ -385,4 +386,14 @@ test('placeTrain ghost is marked invalid where the train would not fit', () => {
   expect(app.overlay.ghostTrainValid).toBe(false);
   canvas.dispatchEvent(pointer('pointermove', onPiece(id, 0, 0.9), { buttons: 0 }));
   expect(app.overlay.ghostTrainValid).toBe(true);
+});
+
+test('placing "Flex curve" from the palette gives the piece its default flex params, and the layout round-trips', async () => {
+  document.querySelector<HTMLElement>('[data-piece="flex-curve"]')!.click();
+  click({ x: 40, y: 40 });
+  expect(app.doc.layout.pieces).toHaveLength(1);
+  expect(app.doc.layout.pieces[0].flex).toEqual({ radius: R_M, sweep: 22.5 });
+  const { serialize, deserialize } = await import('../../src/io/serialize');
+  const r = deserialize(serialize(app.doc.layout));
+  expect(r.ok).toBe(true);
 });

@@ -1,4 +1,4 @@
-import { CATALOG, PALETTE_ORDER, type Family } from '../track/catalog';
+import { CATALOG, FLEX_DEFAULTS, PALETTE_ORDER, type Family, type FlexType } from '../track/catalog';
 import { worldFootprint } from '../track/graph';
 import { MAX_CARS, type Piece, type StyleId } from '../model/types';
 import { STYLES } from '../render/style';
@@ -24,6 +24,7 @@ function drawThumb(canvas: HTMLCanvasElement, type: string, styleId: StyleId): v
   const rot = type.startsWith('straight-d') ? -45 : 0;
   const piece: Piece = { id: 'thumb', type, x: 0, y: 0, rot, level: 0, flipped: false };
   if (CATALOG[type].switch) piece.switch = { mode: 'manual', state: 0 };
+  if (CATALOG[type].flex) piece.flex = { ...FLEX_DEFAULTS[type as FlexType] };
   const pts = worldFootprint(piece).flat();
   const minX = Math.min(...pts.map((p) => p.x)), maxX = Math.max(...pts.map((p) => p.x));
   const minY = Math.min(...pts.map((p) => p.y)), maxY = Math.max(...pts.map((p) => p.y));

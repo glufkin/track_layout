@@ -111,7 +111,7 @@ const crossing = (len: number, angle: number): RouteSpec => {
   };
 };
 
-type FlexType = 'flex-straight' | 'flex-curve';
+export type FlexType = 'flex-straight' | 'flex-curve';
 export const FLEX_DEFAULTS: Record<FlexType, FlexParams> = {
   'flex-straight': { length: 1 },
   'flex-curve': { radius: R_M, sweep: 22.5 },
@@ -194,7 +194,7 @@ const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFi
 
 /** True only when `flex` has the shape `type` needs (a flex type) and lies within FLEX_LIMITS. */
 export function validFlex(type: string, flex: FlexParams | undefined): boolean {
-  if (!Object.prototype.hasOwnProperty.call(CATALOG, type) || typeof flex !== 'object' || flex === null) return false;
+  if (!Object.prototype.hasOwnProperty.call(CATALOG, type) || typeof flex !== 'object' || flex === null || Array.isArray(flex)) return false;
   const kind = CATALOG[type].flex;
   const f = flex as Partial<Record<'length' | 'radius' | 'sweep', unknown>>;
   const L = FLEX_LIMITS;
