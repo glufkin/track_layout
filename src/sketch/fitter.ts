@@ -32,9 +32,6 @@
  *   than MAX_OFF from the rest of the stroke, or more than FOLLOW_LIMIT from it without progressing
  *   along it or turning toward the stroke's heading (swinging round a corner is allowed). No piece
  *   is laid while the ghost is LENGTH_SLACK longer than the stroke; at most 64 pieces per point.
- * - With Shift, no piece turns the lead past the stroke's settled compass heading (within
- *   SETTLE_TOL of a 45° direction) while the lead is within SETTLE_OFF of the stroke: corners turn
- *   exactly onto the new direction, without an S-wiggle back toward the line.
  * - A stall always resolves: while no piece can be laid, `leadS` is re-anchored to the latest
  *   stroke point nearest the lead (within 1.5U), and once BLOCKED_LIMIT (2.5U) of stroke has been
  *   drawn since the last piece, `redFrom` is set. A ghost crossing that would rework pieces below
@@ -91,16 +88,6 @@ const REANCHOR_DIST = 1.5;
 const REANCHOR_SLACK = 0.05;
 /** A crossing join turning more than this in total is rejected as a loop. */
 const MAX_JOIN_TURN = 120;
-/** A Shift stroke heading within this (degrees) of a compass direction has settled on it. */
-const SETTLE_TOL = 10;
-/**
- * With Shift, the lead may not turn past the stroke's settled heading (an S-wiggle) while it is
- * within this of the stroke. A sharp 90° corner leaves the lead at most about 1.65 off the new leg
- * (medium curves, wherever the corner falls between straights), and that corner is kept clean; a
- * lead swung wider (a 135° corner, a hairpin tighter than the pieces) is still pulled back toward
- * the stroke.
- */
-const SETTLE_OFF = 1.75;
 /** After a piece, the lead's stroke position advances by at least this fraction of its length. */
 const MIN_ADVANCE = 0.25;
 /** Pieces appended per `addPoint` at most; the rest follows on later points. */
@@ -390,27 +377,6 @@ export class StrokeFitter {
       + W_TURN * angleDiff(end.rot, this._lead.pose.rot) + W_SHORT * Math.max(0, la - len);
   }
 
-  /**
-   * The compass direction the stroke has settled on at the target: with Shift, `th` rounded to a
-   * multiple of 45° when within SETTLE_TOL of one; else null.
-   */
-  private settledHeading(th: number, shift: boolean): number | null {
-    if (!shift) return null;
-    const q = Math.round(th / 45) * 45;
-    return angleDiff(th, q) <= SETTLE_TOL ? normDeg(q) : null;
-  }
-
-  /**
-   * True when `spec` would turn the lead past the settled heading: it ends on the other side of it,
-   * or leaves it when the lead is already on it. Laying such a piece is the overshoot that makes an
-   * S-wiggle round a corner (out past the new direction, then back).
-   */
-  private passes(spec: PieceSpec, settled: number): boolean {
-    const side = (h: number): number => { const d = normDeg(h - settled); return Math.abs(d) < 1e-6 ? 0 : Math.sign(d); };
-    const from = side(this._lead.pose.rot), to = side(outPose(spec, 1).rot);
-    return from === 0 ? to !== 0 : to === -from;
-  }
-
   /** One step: append a piece, a ramp or a crossing; null when nothing more can be appended now. */
   private step(shift: boolean): number | null {
     if (this._redFrom !== null) return null;
@@ -428,9 +394,7 @@ export class StrokeFitter {
       .map((c, i) => { const spec = this.attach(c); return { spec, i, score: this.score(spec, la, target, th) }; })
       .sort((a, b) => a.score - b.score || a.i - b.i);
     const obstacles = this.obstacles();
-    const settled = this.strokeDist(this._lead.pose, this.leadS - 1) <= SETTLE_OFF ? this.settledHeading(th, shift) : null;
     for (const { spec } of ranked) {
-      if (settled !== null && this.passes(spec, settled)) continue;
       const shape = shapeOf(spec);
       const touched = obstacles.filter((o) => shapesNear(shape, shapeOf(o.spec)));
       if (touched.length === 0) {

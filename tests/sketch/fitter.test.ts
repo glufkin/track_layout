@@ -421,32 +421,3 @@ test('sharp corners, U-turns and hairpins are followed round, not given up on', 
     expect(dist(f.lead.pose, pts[pts.length - 1])).toBeLessThanOrEqual(1.25);
   }
 });
-
-/** Signed turn of each piece (degrees, + = right), entry to exit. */
-const turns = (f: StrokeFitter) => f.pieces.map((s) => {
-  const d = (((outPose(s, 1).rot - outPose(s, 0).rot - 180) % 360) + 540) % 360 - 180;
-  return Math.abs(d) < 1e-6 ? 0 : d;
-});
-
-test('Shift L corners (sharp or rounded 0.5U) turn exactly 90°, never past the new heading', () => {
-  const corners: Array<[string, Vec2[]]> = [
-    ['sharp', polyline([{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: -4 }])],
-    ['r 0.5', [...polyline([{ x: 0, y: 0 }, { x: 3.5, y: 0 }]), ...arcPts({ x: 3.5, y: -0.5 }, 0.5, 90, 0), ...polyline([{ x: 4, y: -0.5 }, { x: 4, y: -4 }])]],
-  ];
-  for (const [name, pts] of corners) {
-    const f = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: 0, level: 0 });
-    drag(f, pts, true);
-    const t = turns(f);
-    expect(t.every((d) => d <= 0), name + ': ' + t.join(',')).toBe(true);
-    expect(t.reduce((a, b) => a + b, 0), name).toBeCloseTo(-90, 6);
-    expect(angleDiff(f.lead.pose.rot, -90), name).toBeLessThan(1e-9);
-  }
-});
-
-test('a Shift rectangle turns exactly 90° at each corner', () => {
-  const f = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: 0, level: 0 });
-  drag(f, polyline([{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 4 }, { x: 0, y: 4 }, { x: 0, y: 1 }]), true);
-  const t = turns(f);
-  expect(t.every((d) => d >= 0), t.join(',')).toBe(true);
-  expect(t.reduce((a, b) => a + b, 0)).toBeCloseTo(270, 6);
-});
