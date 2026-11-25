@@ -10,6 +10,7 @@ import {
 } from '../editor/commands';
 import { carPoses, CAR_WIDTH, type CarPose } from '../sim/motion';
 import { closeGap } from '../sketch/gap';
+import { flexResize, resizeFlex, type FlexResult } from '../sketch/flexResize';
 import { screenToWorld, zoomAt } from '../render/camera';
 import { liftedCarPoses } from '../render/renderer';
 import type { App } from './app';
@@ -35,7 +36,8 @@ type Drag =
   | { kind: 'pan'; last: Vec2 }
   | { kind: 'press'; start: Vec2; hit: string | null; shift: boolean; ring: [WorldConnector, WorldConnector] | null }
   | { kind: 'move'; ids: string[]; start: Vec2; pivot: Vec2; poses: Map<string, Pose> }
-  | { kind: 'box'; start: Vec2; shift: boolean };
+  | { kind: 'box'; start: Vec2; shift: boolean }
+  | { kind: 'resize'; id: string; end: 0 | 1; next: FlexResult | null };
 
 const isTextTarget = (t: EventTarget | null): boolean =>
   t instanceof Element && (t.matches('input, select, textarea') || (t as HTMLElement).isContentEditable);
@@ -74,6 +76,15 @@ export function nearestTrackPos(doc: Doc, pt: Vec2, maxDist: number, dir: 1 | -1
     }
   }
   return best?.pos ?? null;
+}
+
+const near = (a: number, b: number): boolean => Math.abs(a - b) <= 1e-9;
+function sameResize(p: Piece, n: FlexResult): boolean {
+  const f = p.flex!;
+  const sameFlex = 'length' in f
+    ? 'length' in n.flex && near(f.length, n.flex.length)
+    : 'radius' in n.flex && near(f.radius, n.flex.radius) && near(f.sweep, n.flex.sweep);
+  return sameFlex && near(p.x, n.x) && near(p.y, n.y) && near(normDeg(p.rot - n.rot), 0);
 }
 
 const ringCentre = ([a, b]: [WorldConnector, WorldConnector]): Vec2 =>
@@ -217,6 +228,19 @@ export class Input {
     return best;
   }
 
+  /** A resize handle (open end of a selected flex piece) within the snap radius of a world point. */
+  private handleAt(w: Vec2): { id: string; end: 0 | 1 } | null {
+    const { doc, selection } = this.app;
+    let best: { id: string; end: 0 | 1 } | null = null, bestD = this.snapRadius;
+    for (const c of doc.graph.open) {
+      const p = selection.has(c.pieceId) ? doc.piece(c.pieceId) : undefined;
+      if (!p || !getPieceDef(p.type).flex) continue;
+      const d = dist(w, c.pos);
+      if (d <= bestD) { best = { id: p.id, end: c.index as 0 | 1 }; bestD = d; }
+    }
+    return best;
+  }
+
   private connected(id: string): Set<string> {
     const { doc } = this.app;
     const seen = new Set<string>([id]);
@@ -345,6 +369,7 @@ export class Input {
         if (e.target instanceof Element && e.target !== this.canvas && e.target !== document.body) return;
         this.space = true; e.preventDefault(); return;
       case 'Escape':
+        if (this.drag?.kind === 'resize') { this.drag = null; this.app.preview = null; this.app.requestRender(); return; }
         if (m.kind === 'select') { this.selectOnly([]); this.app.notify(); } else this.setMode({ kind: 'select' });
         return;
       case 'Tab':
@@ -421,6 +446,8 @@ export class Input {
     if (m.kind === 'placeTrain') { this.placeTrainAt(m, at); return; }
 
     const w = this.toWorld(at);
+    const handle = this.handleAt(w);
+    if (handle) { this.drag = { kind: 'resize', ...handle, next: null }; return; }
     const train = e.shiftKey ? null : this.trainAt(w);
     if (train) {
       this.app.selection = new Set();
@@ -458,6 +485,16 @@ export class Input {
       this.onMove(at);
       return;
     }
+    if (d.kind === 'resize') {
+      const p = app.doc.piece(d.id);
+      if (!p) return;
+      const next = flexResize(p, d.end, this.toWorld(at), this.alt);
+      d.next = next;
+      const layout = app.doc.layout;
+      app.preview = new Doc({ ...layout, pieces: layout.pieces.map((q) => (q.id === d.id ? { ...q, ...next } : q)) });
+      app.requestRender();
+      return;
+    }
     if (d.kind === 'move') {
       const g = snapGroup(app.doc, d.ids, { delta: sub(this.toWorld(at), d.start), rot: 0, pivot: d.pivot }, this.snapRadius, this.alt);
       d.poses = posesAfterGroup(app.doc, d.ids, g);
@@ -479,6 +516,13 @@ export class Input {
     this.drag = null;
     if (!d || d.kind === 'pan') return;
     if (e.type === 'pointercancel') { app.preview = null; app.box = null; app.requestRender(); return; }
+    if (d.kind === 'resize') {
+      app.preview = null;
+      const p = app.doc.piece(d.id);
+      if (p && d.next && !sameResize(p, d.next)) app.exec(withLifting(app.doc, [d.id], resizeFlex(d.id, d.next)));
+      else app.requestRender();
+      return;
+    }
     if (d.kind === 'press') {
       if (d.ring) { this.closeNearMiss(d.ring); return; }
       if (d.hit) {

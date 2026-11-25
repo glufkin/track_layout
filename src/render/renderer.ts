@@ -249,6 +249,17 @@ export function render(
     tracePolys(ctx, worldFootprint(p));
     ctx.stroke();
   }
+  // Resize handles: small squares on the open ends of selected flex pieces.
+  ctx.fillStyle = '#ffffff';
+  const hs = 5 * px;
+  for (const c of doc.graph.open) {
+    const p = overlay.selectedPieces.has(c.pieceId) ? doc.piece(c.pieceId) : undefined;
+    if (!p || !getPieceDef(p.type).flex) continue;
+    ctx.beginPath();
+    ctx.rect(c.pos.x - hs, c.pos.y - hs, 2 * hs, 2 * hs);
+    ctx.fill();
+    ctx.stroke();
+  }
   if (overlay.selectedTrain) {
     const t = doc.train(overlay.selectedTrain);
     const cars = !t ? [] : t.head !== null ? (placed.find((x) => x.train === t)?.cars ?? []) : t.lifted ? liftedCarPoses(t.lifted, t.cars) : [];

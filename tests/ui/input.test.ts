@@ -446,3 +446,40 @@ test('a near-miss ring that cannot be closed flashes red for 400 ms and changes 
   vi.advanceTimersByTime(1);
   expect(app.flashRing).toBeUndefined();
 });
+
+function flexAt(): Piece {
+  const p: Piece = { id: 'f1', type: 'flex-straight', x: 0, y: 0, rot: 0, level: 0, flipped: false, flex: { length: 1 } };
+  app.loadLayout({ ...emptyLayout(), pieces: [p] });
+  app.selection = new Set(['f1']);
+  return p;
+}
+const toScreen = (w: Vec2): Vec2 => worldToScreen(app.camera, app.viewSize(), w);
+
+test('dragging a selected flex piece\'s end handle resizes it as one undoable step', () => {
+  flexAt();
+  const from = toScreen({ x: 1, y: 0 }), to = toScreen({ x: 2.5, y: 0.2 });
+  drag(from, to);
+  expect(app.doc.piece('f1')!.flex).toEqual({ length: 2.5 });
+  expect(app.selection.has('f1')).toBe(true);
+  expect(app.preview).toBeNull();
+  key('z', { ctrlKey: true });
+  expect(app.doc.piece('f1')!.flex).toEqual({ length: 1 });
+  expect(app.history.canUndo).toBe(false);
+});
+
+test('dragging the start handle moves the piece and keeps its far end', () => {
+  flexAt();
+  drag(toScreen({ x: 0, y: 0 }), toScreen({ x: -0.5, y: 0 }));
+  const p = app.doc.piece('f1')!;
+  expect(p.flex).toEqual({ length: 1.5 });
+  expect(p.x).toBeCloseTo(-0.5, 6);
+});
+
+test('a handle press without movement issues no command; an unselected flex piece has no handles', () => {
+  flexAt();
+  click(toScreen({ x: 1, y: 0 }));
+  expect(app.history.canUndo).toBe(false);
+  app.selection = new Set();
+  drag(toScreen({ x: 1, y: 0 }), toScreen({ x: 2.5, y: 0 }));
+  expect(app.doc.piece('f1')!.flex).toEqual({ length: 1 });
+});
