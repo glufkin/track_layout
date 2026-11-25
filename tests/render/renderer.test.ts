@@ -184,3 +184,14 @@ test('wooden flex pieces get a joint line across the band at each end', () => {
   expect(strokes('flex-straight', { flex: { length: 1 } })).toBeGreaterThanOrEqual(strokes('straight-1', {}) + 2);
   expect(strokes('flex-curve', { flex: { radius: 2.5, sweep: 22.5 } })).toBeGreaterThanOrEqual(strokes('curve-m-45', {}) + 2);
 });
+
+test('a flashing near-miss ring is stroked red at its centre', () => {
+  const rings = (o: Partial<Overlay>) => {
+    const { ctx, calls } = mockContext();
+    render(ctx, new Doc(emptyLayout()), defaultCamera(), size, overlay(o), 'wooden');
+    return calls.filter((c, i) => c.name === 'stroke' && c.strokeStyle === '#e53935' && calls[i - 1]?.name === 'arc')
+      .map((c) => calls[calls.indexOf(c) - 1].args.slice(0, 2));
+  };
+  expect(rings({ flashRing: { x: 2, y: 3 } })).toEqual([[2, 3]]);
+  expect(rings({})).toEqual([]);
+});

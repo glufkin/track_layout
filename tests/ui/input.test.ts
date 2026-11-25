@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { App } from '../../src/ui/app';
-import type { Vec2 } from '../../src/geom/vec';
+import type { Pose, Vec2 } from '../../src/geom/vec';
+import { type Piece, emptyLayout } from '../../src/model/types';
+import { attachSpec, outPose, specToPiece } from '../../src/sketch/spec';
 import { samplePath } from '../../src/geom/path';
 import { worldRoutePath } from '../../src/track/graph';
 import { worldToScreen } from '../../src/render/camera';
@@ -396,4 +398,51 @@ test('placing "Flex curve" from the palette gives the piece its default flex par
   const { serialize, deserialize } = await import('../../src/io/serialize');
   const r = deserialize(serialize(app.doc.layout));
   expect(r.ok).toBe(true);
+});
+
+/** Two straight-1 runs meeting in a near miss at x = 2: 0.03 sideways and 1° off. */
+function nearMissLayout(): void {
+  const pieces: Piece[] = [];
+  let at: Pose = { x: 0, y: 0, rot: 0 };
+  for (const id of ['a1', 'a2']) { const s = attachSpec('straight-1', false, undefined, at, 0); pieces.push(specToPiece(s, id)); at = outPose(s, 1); }
+  at = { x: 2, y: 0.03, rot: 1 };
+  for (const id of ['b1', 'b2']) { const s = attachSpec('straight-1', false, undefined, at, 0); pieces.push(specToPiece(s, id)); at = outPose(s, 1); }
+  app.loadLayout({ ...emptyLayout(), pieces });
+}
+
+const ringAt = (): Vec2 => {
+  const [a, b] = app.doc.graph.nearMisses[0];
+  return worldToScreen(app.camera, app.viewSize(), { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 });
+};
+
+test('clicking a near-miss ring closes the gap as one history entry (not a selection)', () => {
+  nearMissLayout();
+  const before = structuredClone(app.doc.layout.pieces);
+  expect(app.doc.graph.nearMisses).toHaveLength(1);
+  click(ringAt());
+  expect(app.doc.graph.nearMisses).toEqual([]);
+  expect(app.doc.layout.pieces.some((p) => p.type.startsWith('flex-'))).toBe(true);
+  expect(app.selection.size).toBe(0);
+  key('z', { ctrlKey: true });
+  expect(app.doc.layout.pieces).toEqual(before);
+  expect(app.history.canUndo).toBe(false);
+});
+
+test('a near-miss ring that cannot be closed flashes red for 400 ms and changes nothing', () => {
+  vi.useFakeTimers();
+  const s1 = specToPiece(attachSpec('switch', false, undefined, { x: 0, y: 0, rot: 180 }, 0), 's1');
+  const e = outPose(s1, 1);
+  const s2 = specToPiece(attachSpec('switch', false, undefined, { x: e.x, y: e.y + 0.03, rot: e.rot + 1 }, 0, 1), 's2');
+  for (const s of [s1, s2]) s.switch = { mode: 'manual', state: 0 };
+  app.loadLayout({ ...emptyLayout(), pieces: [s1, s2] });
+  const before = structuredClone(app.doc.layout.pieces);
+  const ring = app.doc.graph.nearMisses[0];
+  click(ringAt());
+  expect(app.doc.layout.pieces).toEqual(before);
+  expect(app.history.canUndo).toBe(false);
+  expect(app.flashRing).toEqual({ x: (ring[0].pos.x + ring[1].pos.x) / 2, y: (ring[0].pos.y + ring[1].pos.y) / 2 });
+  vi.advanceTimersByTime(399);
+  expect(app.flashRing).toBeDefined();
+  vi.advanceTimersByTime(1);
+  expect(app.flashRing).toBeUndefined();
 });

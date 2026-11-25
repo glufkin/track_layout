@@ -9,6 +9,7 @@ import {
   canPlaceTrain, deletePieces, deleteTrains, moveTrain, placePieces, placeTrain, transformPieces, withLifting,
 } from '../editor/commands';
 import { carPoses, CAR_WIDTH, type CarPose } from '../sim/motion';
+import { closeGap } from '../sketch/gap';
 import { screenToWorld, zoomAt } from '../render/camera';
 import { liftedCarPoses } from '../render/renderer';
 import type { App } from './app';
@@ -32,7 +33,7 @@ const ROUTE_SAMPLE = 0.02;
 
 type Drag =
   | { kind: 'pan'; last: Vec2 }
-  | { kind: 'press'; start: Vec2; hit: string | null; shift: boolean }
+  | { kind: 'press'; start: Vec2; hit: string | null; shift: boolean; ring: [WorldConnector, WorldConnector] | null }
   | { kind: 'move'; ids: string[]; start: Vec2; pivot: Vec2; poses: Map<string, Pose> }
   | { kind: 'box'; start: Vec2; shift: boolean };
 
@@ -74,6 +75,9 @@ export function nearestTrackPos(doc: Doc, pt: Vec2, maxDist: number, dir: 1 | -1
   }
   return best?.pos ?? null;
 }
+
+const ringCentre = ([a, b]: [WorldConnector, WorldConnector]): Vec2 =>
+  ({ x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 });
 
 /** Pointer, wheel and keyboard handling for the canvas (spec §5.3, §5.10). */
 export class Input {
@@ -203,6 +207,16 @@ export class Input {
     return null;
   }
 
+  /** The near miss whose ring midpoint is nearest a world point, within the snap radius. */
+  private nearMissAt(w: Vec2): [WorldConnector, WorldConnector] | null {
+    let best: [WorldConnector, WorldConnector] | null = null, bestD = this.snapRadius;
+    for (const pair of this.app.doc.graph.nearMisses) {
+      const d = dist(w, ringCentre(pair));
+      if (d <= bestD) { best = pair; bestD = d; }
+    }
+    return best;
+  }
+
   private connected(id: string): Set<string> {
     const { doc } = this.app;
     const seen = new Set<string>([id]);
@@ -282,6 +296,13 @@ export class Input {
     const ids = [...this.app.selection];
     if (!ids.length) return;
     this.transformSelection(posesAfterGroup(this.app.doc, ids, { delta: { x: 0, y: 0 }, rot: deg, pivot: this.centroid(ids) }));
+  }
+
+  /** Close a clicked near miss as one undo step (spec §5.1); if nothing fits, flash its ring red. */
+  private closeNearMiss(pair: [WorldConnector, WorldConnector]): void {
+    const cmd = closeGap(this.app.doc, pair[0], pair[1]);
+    if (cmd) this.app.exec(cmd);
+    else this.app.flash(ringCentre(pair));
   }
 
   private deleteSelection(): void {
@@ -409,7 +430,8 @@ export class Input {
       else this.app.notify();
       return;
     }
-    this.drag = { kind: 'press', start: at, hit: this.pieceAt(w), shift: e.shiftKey };
+    const ring = e.shiftKey ? null : this.nearMissAt(w);
+    this.drag = { kind: 'press', start: at, hit: this.pieceAt(w), shift: e.shiftKey, ring };
   }
 
   private onMove(at: Vec2): void {
@@ -458,6 +480,7 @@ export class Input {
     if (!d || d.kind === 'pan') return;
     if (e.type === 'pointercancel') { app.preview = null; app.box = null; app.requestRender(); return; }
     if (d.kind === 'press') {
+      if (d.ring) { this.closeNearMiss(d.ring); return; }
       if (d.hit) {
         const p = app.doc.piece(d.hit);
         if (d.shift) {

@@ -17,7 +17,12 @@ export interface Overlay {
   /** False when the ghost train could not be placed there (drawn red, like an invalid piece ghost). */
   ghostTrainValid?: boolean;
   showConnectors: boolean;
+  /** A near-miss ring that could not be closed, flashed red (the app clears it after FLASH_MS). */
+  flashRing?: Vec2;
 }
+
+/** How long a near-miss ring that could not be closed flashes red. */
+export const FLASH_MS = 400;
 
 const SHADOW = 'rgba(0,0,0,0.25)';
 const SHADOW_STEP = 0.06;
@@ -27,6 +32,7 @@ const SWITCH_ARROW = 'rgba(60,35,15,0.8)';
 const CONNECTOR = 'rgba(46,160,67,0.9)';
 const NEAR_MISS = '#ff8c00';
 const NEAR_MISS_R = 0.15;
+const FLASH = '#e53935';
 const OVERLAP = 'rgba(229,57,53,0.35)';
 const SELECT = '#1e88e5';
 const CRASH = '#e53935';
@@ -218,6 +224,12 @@ export function render(
   for (const [a, b] of doc.graph.nearMisses) {
     ctx.beginPath();
     ctx.arc((a.pos.x + b.pos.x) / 2, (a.pos.y + b.pos.y) / 2, NEAR_MISS_R, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  if (overlay.flashRing) {
+    ctx.strokeStyle = FLASH;
+    ctx.beginPath();
+    ctx.arc(overlay.flashRing.x, overlay.flashRing.y, NEAR_MISS_R, 0, Math.PI * 2);
     ctx.stroke();
   }
 

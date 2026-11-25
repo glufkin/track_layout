@@ -5,7 +5,7 @@ import { History, type Command } from '../editor/history';
 import { Simulation } from '../sim/simulation';
 import { deserialize, loadAutosave, saveAutosave, serialize } from '../io/serialize';
 import { type Camera, defaultCamera, fitBounds } from '../render/camera';
-import { render, type Overlay } from '../render/renderer';
+import { render, FLASH_MS, type Overlay } from '../render/renderer';
 import { worldFootprint } from '../track/graph';
 import { getPieceDef } from '../track/catalog';
 import { Input } from './input';
@@ -38,6 +38,8 @@ export class App {
   preview: Doc | null = null;
   /** Screen-space box-select rectangle, drawn over the scene. */
   box: { a: Vec2; b: Vec2 } | null = null;
+  /** World centre of a near-miss ring flashing red (it could not be closed); cleared after FLASH_MS. */
+  flashRing: Vec2 | undefined;
 
   private ctx: CanvasRenderingContext2D | null;
   private listeners: Array<() => void> = [];
@@ -48,6 +50,7 @@ export class App {
   /** Frame time of the last autosave made because trains were running (null: none running). */
   private lastPlaySave: number | null = null;
   private disposers: Array<() => void> = [];
+  private flashTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(root: HTMLElement) {
     this.doc = new Doc(loadAutosave() ?? emptyLayout());
@@ -156,6 +159,18 @@ export class App {
     saveAutosave(this.doc.layout);
   }
 
+  /** Flash a near-miss ring red for FLASH_MS. */
+  flash(at: Vec2): void {
+    if (this.flashTimer !== null) clearTimeout(this.flashTimer);
+    this.flashRing = at;
+    this.requestRender();
+    this.flashTimer = setTimeout(() => {
+      this.flashTimer = null;
+      this.flashRing = undefined;
+      this.requestRender();
+    }, FLASH_MS);
+  }
+
   /** Subscribe to state changes (history, selection, settings, mode). */
   onChange(fn: () => void): void { this.listeners.push(fn); }
 
@@ -253,6 +268,7 @@ export class App {
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     this.frame = null;
     if (this.autosaveTimer !== null) clearTimeout(this.autosaveTimer);
+    if (this.flashTimer !== null) clearTimeout(this.flashTimer);
     this.input.dispose();
     hidePanels();
     for (const d of this.disposers) d();
@@ -275,6 +291,7 @@ export class App {
       selectedPieces: this.selection,
       selectedTrain: this.selectedTrain,
       showConnectors: true,
+      flashRing: this.flashRing,
     };
     render(ctx, this.preview ?? this.doc, this.camera, size, overlay, this.style);
     if (this.box) {
