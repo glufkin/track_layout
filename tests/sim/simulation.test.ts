@@ -4,7 +4,7 @@ import { pieceConnectors } from '../../src/track/catalog';
 import { Doc } from '../../src/model/doc';
 import { emptyLayout, type Piece, type Train, type TrackPos } from '../../src/model/types';
 import { occupiedPieces, reverseHead } from '../../src/sim/motion';
-import { Simulation, ACCEL, STEP, MAX_DT, HILL_FACTOR } from '../../src/sim/simulation';
+import { Simulation, ACCEL, STEP, MAX_DT, HILL_FACTOR, BUFFER_WAIT } from '../../src/sim/simulation';
 
 const P = (id: string, type: string, x: number, y: number, rot = 0, level = 0): Piece =>
   ({ id, type, x, y, rot, level, flipped: false });
@@ -83,12 +83,16 @@ test('train brakes and stops exactly at a buffer without passing it', () => {
   const d = doc([s0, s1, buf], [t]);
   const sim = new Simulation(d);
   let maxSeen = 0;
-  run(sim, 6, () => {
-    if (t.head!.pieceId === 'buf') {
+  let rest: { dist: number; piece: string } | null = null;
+  run(sim, 3.9, () => {
+    if (t.head!.pieceId === 'buf' && !rest) {
       expect(t.head!.dist).toBeLessThanOrEqual(0.5 + 1e-12);
       maxSeen = Math.max(maxSeen, t.head!.dist);
+      if (t.currentSpeed === 0) rest = { dist: t.head!.dist, piece: 'buf' };
     }
   });
+  // Rested at the buffer (the 2 s wait has not yet elapsed).
+  expect(rest).not.toBeNull();
   expect(t.head!.pieceId).toBe('buf');
   expect(t.head!.dist).toBeGreaterThan(0.5 - 0.02);
   expect(t.currentSpeed).toBe(0);
@@ -292,4 +296,93 @@ test('reverse swaps head to tail and clears crash', () => {
   const before = t.head!.dist;
   sim.step(0.25);
   expect(t.head!.pieceId === 's0' || t.head!.dist < before).toBe(true);
+});
+
+/** s0, s1 then a buffer; a train running toward it. Steps until it first rests at the buffer. */
+function bufferSetup() {
+  const s0 = P('s0', 'straight-2', 0, 0);
+  const s1 = P('s1', 'straight-2', 2, 0);
+  const buf = off('buf', 'buffer', s1, 1);
+  const t = train('t1', T('s0', 0.5), { speed: 2, cars: 1 });
+  const d = doc([s0, s1, buf], [t]);
+  const sim = new Simulation(d);
+  for (let i = 0; i < 20 / STEP && !(t.currentSpeed === 0 && t.head!.pieceId === 'buf' && t.head!.dist > 0.4); i++) {
+    if (t.currentSpeed === 0 && i > 5) break;
+    sim.step(STEP);
+  }
+  return { t, sim, d };
+}
+
+test('train at a buffer waits 2 s then reverses and runs away', () => {
+  const { t, sim } = bufferSetup();
+  expect(t.head!.pieceId).toBe('buf');
+  expect(t.currentSpeed).toBe(0);
+  const before = { ...t.head! };
+  run(sim, BUFFER_WAIT - 0.1);
+  expect(t.head).toEqual(before);
+  run(sim, 0.2);
+  expect(t.head!.dir).toBe(-before.dir as 1 | -1);
+  expect(t.running).toBe(true);
+  run(sim, 2);
+  expect(t.running).toBe(true);
+  expect(t.currentSpeed).toBeGreaterThan(0);
+  expect(t.head!.pieceId).not.toBe('buf');
+});
+
+test('pause does not advance the buffer wait', () => {
+  const { t, sim } = bufferSetup();
+  run(sim, 1);
+  sim.paused = true;
+  run(sim, 5);
+  sim.paused = false;
+  const before = { ...t.head! };
+  run(sim, 0.8);
+  expect(t.head).toEqual(before);
+  run(sim, 0.4);
+  expect(t.head!.dir).toBe(-before.dir as 1 | -1);
+});
+
+test('stopping the train during the wait cancels the reversal', () => {
+  const { t, sim } = bufferSetup();
+  const before = { ...t.head! };
+  run(sim, 1);
+  t.running = false;
+  run(sim, 3);
+  expect(t.head).toEqual(before);
+});
+
+test('a bare open end still stops for good', () => {
+  const t = train('t1', T('s3', 0), { speed: 1.5, currentSpeed: 1.5 });
+  const d = doc(longLine(), [t]);
+  const sim = new Simulation(d);
+  run(sim, 5);
+  expect(t.currentSpeed).toBe(0);
+  const at = { ...t.head! };
+  run(sim, 5);
+  expect(t.head).toEqual(at);
+  expect(at.dir).toBe(1);
+});
+
+test('pressing Run at a buffer starts a fresh 2 s wait', () => {
+  const { t, sim } = bufferSetup();
+  const before = { ...t.head! };
+  run(sim, 1);
+  t.running = false;
+  run(sim, 3);
+  t.running = true;
+  run(sim, 1.9);
+  expect(t.head).toEqual(before);
+  run(sim, 0.2);
+  expect(t.head!.dir).toBe(-before.dir as 1 | -1);
+});
+
+test('lifting the train during the wait cancels the reversal', () => {
+  const { t, sim } = bufferSetup();
+  run(sim, 1);
+  const saved = t.head!;
+  t.head = null; t.lifted = { x: 0, y: 0, rot: 0 } as never;
+  run(sim, 3);
+  t.head = saved; t.lifted = null;
+  run(sim, 1.5);
+  expect(t.head).toEqual(saved);
 });

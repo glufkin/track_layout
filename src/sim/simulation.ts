@@ -12,12 +12,17 @@ export const STEP = 1 / 120;
 export const MAX_DT = 0.25;
 /** Fractional speed change on a ramp with the hill effect on. */
 export const HILL_FACTOR = 0.35;
+/** Seconds a running train rests at a buffer stop before reversing. */
+export const BUFFER_WAIT = 2;
 
 export class Simulation {
   paused = false;
   private doc: Doc;
   /** Auto switches each train has entered facing and that flip once nothing occupies them. */
   private pendingFlips = new Map<string, Set<string>>();
+
+  /** Seconds each train has rested at a buffer stop. */
+  private bufferWaits = new Map<string, number>();
 
   constructor(doc: Doc) { this.doc = doc; }
 
@@ -55,13 +60,20 @@ export class Simulation {
     t.crashAt = null;
   }
 
-  forget(trainId: string): void { this.pendingFlips.delete(trainId); }
+  forget(trainId: string): void {
+    this.pendingFlips.delete(trainId);
+    this.bufferWaits.delete(trainId);
+  }
 
   /** Drop internal state of trains that were deleted or lifted. */
   private prune(): void {
     for (const id of [...this.pendingFlips.keys()]) {
       const t = this.doc.train(id);
       if (!t || t.head === null) this.pendingFlips.delete(id);
+    }
+    for (const id of [...this.bufferWaits.keys()]) {
+      const t = this.doc.train(id);
+      if (!t || t.head === null) this.bufferWaits.delete(id);
     }
   }
 
@@ -79,6 +91,25 @@ export class Simulation {
     for (const t of this.doc.layout.trains) if (t.head !== null) this.moveTrain(t, h);
     this.resolveFlips();
     checkCollisions(this.doc);
+    this.updateBufferWaits(h);
+  }
+
+  private restingAtBuffer(t: Train): boolean {
+    if (t.head === null || t.lifted || !t.running || t.crashed || t.currentSpeed !== 0) return false;
+    if (this.doc.piece(t.head.pieceId)?.type !== 'buffer') return false;
+    return distanceAhead(this.doc, t.head, 0.01) <= 0.005;
+  }
+
+  /** Time trains resting at a buffer stop; reverse each after BUFFER_WAIT and let it run on. */
+  private updateBufferWaits(h: number): void {
+    for (const t of this.doc.layout.trains) {
+      if (!this.restingAtBuffer(t)) { this.bufferWaits.delete(t.id); continue; }
+      const w = (this.bufferWaits.get(t.id) ?? 0) + h;
+      if (w >= BUFFER_WAIT - 1e-9) {
+        this.bufferWaits.delete(t.id);
+        this.reverse(t.id);
+      } else this.bufferWaits.set(t.id, w);
+    }
   }
 
   private targetSpeed(t: Train, head: TrackPos): number {
