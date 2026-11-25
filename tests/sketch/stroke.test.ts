@@ -369,3 +369,28 @@ test('a stroke crossing a straight 0.8U from its open end commits no overlap', (
   if (cmd) new History().exec(cmd, doc);
   expect(doc.graph.overlaps).toEqual([]);
 });
+
+const turnOf = (pieces: Piece[]) => pieces.reduce((t, p) =>
+  t + pieceGeometry(p).routes[0].path.segments.reduce((u, s) => u + (s.kind === 'arc' ? Math.abs(s.sweep) : 0), 0), 0);
+
+test('ending 0.3U off a nearly aligned open end joins with a gentle S, reworking trailing pieces', () => {
+  const z = piece('z', 'straight-1', { x: 6, y: 0.3, rot: 0 });
+  const doc = docOf([z]);
+  const { cmd } = sketch(doc, [{ x: 0, y: 0 }, { x: 5.85, y: 0.1 }]);
+  new History().exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
+  expect(doc.graph.joins.has('z:0')).toBe(true);
+  const flex = doc.layout.pieces.filter((p) => p.type === 'flex-curve');
+  expect(turnOf(doc.layout.pieces)).toBeLessThan(40);
+  for (const p of flex) expect((p.flex as { radius: number }).radius).toBeGreaterThanOrEqual(1.4);
+});
+
+test('a merging-switch end whose join would run over nearby track commits no overlap', () => {
+  const track = run('r', 'straight-2', { x: -2, y: 0, rot: 0 }, 5);
+  const c = specToPiece({ type: 'curve-m-45', x: 1.51, y: 0.85, rot: 20.63, level: 0, flipped: true }, 'c');
+  const doc = docOf([...track, c]);
+  expect(doc.graph.overlaps).toEqual([]);
+  const { cmd } = sketch(doc, [{ x: 8.98, y: 2.43 }, { x: 4.61, y: 0 }]);
+  if (cmd) new History().exec(cmd, doc);
+  expect(doc.graph.overlaps).toEqual([]);
+});

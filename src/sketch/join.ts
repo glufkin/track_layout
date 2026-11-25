@@ -1,5 +1,5 @@
 import { type Pose, type Vec2, dist, angleDiff, fromAngle, sub } from '../geom/vec';
-import { type FlexParams, R_S, FLEX_LIMITS, validFlex } from '../track/catalog';
+import { type FlexParams, R_S, FLEX_LIMITS, pieceGeometry, validFlex } from '../track/catalog';
 import { JOIN_POS_TOL, JOIN_ANGLE_TOL } from '../track/graph';
 import { type PieceSpec, attachSpec, chainEnd } from './spec';
 
@@ -21,6 +21,8 @@ const MAX_ARC_SWEEP = FLEX_LIMITS.maxSweep;
 export const MIN_ARC_SWEEP = 0.01;
 /** Tangent-length ratios d2/d1 tried for the biarc, equal lengths first. */
 const RATIOS = [1, 2 / 3, 3 / 2, 1 / 2, 2, 1 / 3, 3, 1 / 5, 5];
+/** Chains whose total turns differ by less than this (degrees, the join angle tolerance) turn equally. */
+const TURN_TIE = JOIN_ANGLE_TOL;
 
 type Part = { type: string; flipped: boolean; flex?: FlexParams };
 
@@ -148,20 +150,21 @@ function filletParts(p0: Vec2, h0: number, p1: Vec2, h1: number): Part[] | null 
 const PADS = [0.5, 0.75, 0.9];
 
 /**
- * Step 2: biarcs. Equal tangent lengths first, then the ratio search; then (still a biarc, plus
- * flex straights) a single filleted arc, and biarcs padded with straights at both ends, which
- * reach the flat S-bends and gentle turns a bare biarc can only do with radii beyond 8U.
+ * Step 2: biarcs at every tangent-length ratio; (still a biarc, plus flex straights) a single
+ * filleted arc; and biarcs padded with straights at both ends, which reach the flat S-bends and
+ * gentle turns a bare biarc can only do with radii beyond 8U. Of all that close, the gentlest
+ * (least total turn, then shortest) is returned.
  */
 function biarc(from: Pose, to: Pose, level: number): PieceSpec[] | null {
   const h0 = from.rot, h1 = to.rot + 180; // travel headings at both ends
   const p0: Vec2 = from, p1: Vec2 = to;
-  const tryParts = (parts: Part[] | null): PieceSpec[] | null => (parts ? layChain(parts, from, to, level) : null);
-  for (const k of RATIOS) {
-    const chain = tryParts(biarcParts(p0, h0, p1, h1, k));
-    if (chain) return chain;
-  }
-  const fillet = tryParts(filletParts(p0, h0, p1, h1));
-  if (fillet) return fillet;
+  const found: PieceSpec[][] = [];
+  const tryParts = (parts: Part[] | null): void => {
+    const chain = parts ? layChain(parts, from, to, level) : null;
+    if (chain) found.push(chain);
+  };
+  for (const k of RATIOS) tryParts(biarcParts(p0, h0, p1, h1, k));
+  tryParts(filletParts(p0, h0, p1, h1));
   const t0 = fromAngle(h0), t1 = fromAngle(h1), half = dist(p0, p1) / 2;
   for (const f of PADS) {
     const s = f * half;
@@ -170,11 +173,38 @@ function biarc(from: Pose, to: Pose, level: number): PieceSpec[] | null {
     if (!pad) continue;
     for (const k of RATIOS) {
       const mid = biarcParts(a, h0, b, h1, k);
-      const chain = mid && tryParts([...pad, ...mid, ...pad]);
-      if (chain) return chain;
+      if (mid) tryParts([...pad, ...mid, ...pad]);
     }
   }
-  return null;
+  return gentlest(found);
+}
+
+/** Total absolute turn of a chain, in degrees. */
+export function chainTurn(chain: PieceSpec[]): number {
+  return chain.reduce((t, s) => t + pieceGeometry(s).routes[0].path.segments
+    .reduce((u, seg) => u + (seg.kind === 'arc' ? Math.abs(seg.sweep) : 0), 0), 0);
+}
+
+const chainLength = (chain: PieceSpec[]): number =>
+  chain.reduce((t, s) => t + pieceGeometry(s).routes[0].path.length, 0);
+const minRadius = (chain: PieceSpec[]): number =>
+  chain.reduce((m, s) => (s.flex && 'radius' in s.flex ? Math.min(m, s.flex.radius) : m), Infinity);
+
+/**
+ * Of several closing chains, the gentlest: least total turn; between chains whose turns differ by
+ * less than TURN_TIE (they reach the same heading, within the join tolerance), the widest tightest
+ * curve, then the shortest. Null for none.
+ */
+export function gentlest(chains: PieceSpec[][]): PieceSpec[] | null {
+  let best: { c: PieceSpec[]; t: number; r: number; l: number } | null = null;
+  for (const c of chains) {
+    const e = { c, t: chainTurn(c), r: minRadius(c), l: chainLength(c) };
+    const better = !best
+      || e.t < best.t - TURN_TIE
+      || (e.t <= best.t + TURN_TIE && (e.r > best.r + EPS || (e.r >= best.r - EPS && e.l < best.l)));
+    if (better) best = e;
+  }
+  return best && best.c;
 }
 
 /**

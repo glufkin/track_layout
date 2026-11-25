@@ -12,12 +12,12 @@ import { Doc } from '../model/doc';
 import type { Piece } from '../model/types';
 import { pieceGeometry } from '../track/catalog';
 import {
-  JOIN_ANGLE_TOL, JOIN_POS_TOL, type WorldConnector, connKey, routeShape, shapeDist, shapesNear, worldConnectors,
+  JOIN_ANGLE_TOL, JOIN_POS_TOL, type WorldConnector, buildGraph, connKey, routeShape, shapeDist, shapesNear, worldConnectors,
 } from '../track/graph';
 import { batch, deletePieces, placePieces, withLifting } from '../editor/commands';
 import type { Command } from '../editor/history';
 import { type FitterStart, type StrokeFitter, crossId } from './fitter';
-import { solveJoin } from './join';
+import { chainTurn, gentlest, solveJoin } from './join';
 import { type PieceSpec, attachSpec, outPose, specToPiece } from './spec';
 import { type Splice, mergeStraights, switchSplice } from './splice';
 
@@ -31,6 +31,13 @@ export const MIN_STROKE = 0.5;
 const BUFFER_HIT = 0.25;
 /** Most trailing ghost pieces the end join may rework (spec §5.4). */
 const MAX_REWORK = 2;
+/**
+ * An end join turning more than this in total (degrees) is a loop and is rejected. Wider than the
+ * fitter's MAX_JOIN_TURN (120°) for crossings: a stroke meeting straight track square-on can only reach a
+ * merging switch's branch (spec §5.7) with an S-bend of 45° plus twice its first bend, which close
+ * to the track takes up to about 170°. The gentlest chain is always preferred.
+ */
+const MAX_END_JOIN_TURN = 180;
 /** Stroke length, back from its end, searched for the pointer getting past the last piece's middle. */
 const TRIM_TAIL = 3;
 const EPS = 1e-9;
@@ -149,7 +156,8 @@ function pastHalf(spec: PieceSpec, points: Vec2[], endPt: Vec2): boolean {
  * 1. Trim the last ghost piece (not below `fitter.frozen`) if the stroke never got halfway past it.
  * 2. A red stroke ends at its lead (the last good piece) in a buffer stop.
  * 3. The end: an open connector or buffer stop within `snapRadius` at the lead level is joined with
- *    `solveJoin` (reworking up to two trailing unfrozen pieces; a joined buffer is removed); else a
+ *    `solveJoin` (the gentlest overlap-free chain over reworking zero to two trailing unfrozen
+ *    pieces; a joined buffer is removed); else a
  *    merging switch on plain straight track, joined to its branch; else (or when no join is found)
  *    a buffer stop at the lead. A lead buffer that would overlap track drops unfrozen trailing
  *    pieces until it fits; if none fits down to `frozen`, the end is left open.
@@ -195,15 +203,38 @@ export function finishStroke(doc: Doc, start: StrokeStart, fitter: StrokeFitter,
     ghost.pop();
   }
 
-  /** Join the lead (or the anchor of up to two trailing unfrozen pieces) to `to`; true when done. */
-  const joinTo = (to: Pose): boolean => {
+  /**
+   * True when `fresh` (and the pieces `splice` adds) overlap no same-level track other than what is
+   * going: the world minus `gone` and the splice's removals, plus ghost[0..keep). Track joined to the
+   * new pieces, directly or through one piece, is exempt as in the graph's overlap test.
+   */
+  const clear = (fresh: PieceSpec[], keep: number, gone: string[], splice?: Splice): boolean => {
+    const out = new Set([...gone, ...(splice?.remove ?? [])]);
+    const others = [...world.values()].filter((p) => !out.has(p.id));
+    ghost.slice(0, keep).forEach((s, i) => others.push(specToPiece(s, '\u0000ghost:' + i)));
+    const tag = '\u0000new:';
+    const mine = [...(splice?.add ?? []), ...fresh].map((s, i) => specToPiece(s, tag + i));
+    return !buildGraph([...others, ...mine]).overlaps.some(([a, b]) => a.startsWith(tag) || b.startsWith(tag));
+  };
+
+  /**
+   * Join the lead (or the anchor of up to MAX_REWORK trailing unfrozen pieces) to `to`. Of every
+   * rework count that closes without overlapping other track (removing `gone` and applying
+   * `splice` first) and turns at most MAX_END_JOIN_TURN, the gentlest chain is taken; true when done.
+   */
+  const joinTo = (to: Pose, gone: string[], splice?: Splice): boolean => {
     const n = ghost.length;
+    const found: Array<{ keep: number; chain: PieceSpec[] }> = [];
     for (let k = 0; k <= MAX_REWORK && n - k >= frozen; k++) {
       const from = k === 0 ? lead : fitter.anchors[n - k];
       const chain = mates(from, to) ? [] : solveJoin(from, to, level);
-      if (chain) { ghost = [...ghost.slice(0, n - k), ...chain]; return true; }
+      if (chain && chainTurn(chain) <= MAX_END_JOIN_TURN && clear(chain, n - k, gone, splice)) found.push({ keep: n - k, chain });
     }
-    return false;
+    const best = gentlest(found.map((f) => f.chain));
+    const pick = found.find((f) => f.chain === best);
+    if (!pick) return false;
+    ghost = [...ghost.slice(0, pick.keep), ...pick.chain];
+    return true;
   };
 
   // 2./3. Resolve the end.
@@ -230,13 +261,13 @@ export function finishStroke(doc: Doc, start: StrokeStart, fitter: StrokeFitter,
     }
     const target = pickNearest(targets, level);
     if (target) {
-      if (joinTo(target.to)) {
+      if (joinTo(target.to, target.buffer ? [target.buffer] : [])) {
         ended = true;
         if (target.buffer) remove(target.buffer);
       }
     } else {
       const sw = switchSplice(trackDoc, endPt, level, fromAngle(lead.rot), 'merge', snapRadius);
-      if (sw && joinTo(sw.branch)) {
+      if (sw && joinTo(sw.branch, [], sw.splice)) {
         ended = true;
         apply(sw.splice, (i) => 'end:' + i);
       }

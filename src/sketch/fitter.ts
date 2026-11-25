@@ -44,7 +44,7 @@ import { Doc } from '../model/doc';
 import { MAX_LEVEL, type Piece } from '../model/types';
 import { pieceGeometry } from '../track/catalog';
 import { JOIN_POS_TOL, OVERLAP_CLEARANCE, type RouteShape, buildGraph, distToSeg, routeShape, shapesNear } from '../track/graph';
-import { solveJoin } from './join';
+import { chainTurn, gentlest, solveJoin } from './join';
 import { type PieceSpec, attachSpec, outPose, specToPiece } from './spec';
 import { type Splice, crossingSplice } from './splice';
 
@@ -150,12 +150,6 @@ interface Obstacle { id: string; spec: PieceSpec; ghost: number | null }
 
 const connectorsOf = (p: PieceSpec): Vec2[] => pieceGeometry(p).connectors.map((_, i) => outPose(p, i));
 const hasConnectorAt = (p: PieceSpec, at: Vec2): boolean => connectorsOf(p).some((c) => dist(c, at) < JOIN_POS_TOL);
-
-/** Total absolute turn of a chain, in degrees. */
-const chainTurn = (chain: PieceSpec[]): number => chain.reduce((t, s) => {
-  const g = pieceGeometry(s);
-  return t + g.routes[0].path.segments.reduce((u, seg) => u + (seg.kind === 'arc' ? Math.abs(seg.sweep) : 0), 0);
-}, 0);
 
 export class StrokeFitter {
   readonly points: Vec2[] = [];
@@ -490,18 +484,20 @@ export class StrokeFitter {
   }
 
   /**
-   * Re-join the ghost to `entry`, reworking up to two trailing pieces (not behind `fixed`): the
-   * number of pieces dropped and the joining chain, or null.
+   * Re-join the ghost to `entry`, reworking up to two trailing pieces (not behind `fixed`): of the
+   * rework counts whose chain turns at most MAX_JOIN_TURN and passes `ok` (the overlap check), the
+   * gentlest chain; the number of pieces dropped and the chain, or null.
    */
-  private joinTo(entry: Pose): { drop: number; chain: PieceSpec[] } | null {
+  private joinTo(entry: Pose, ok: (join: { drop: number; chain: PieceSpec[] }) => boolean): { drop: number; chain: PieceSpec[] } | null {
     const n = this.pieces.length;
+    const found: Array<{ drop: number; chain: PieceSpec[] }> = [];
     for (let k = 0; k <= 2 && n - k >= this.fixed; k++) {
       const from = k === 0 ? this._lead.pose : this.anchors[n - k];
-      if (dist(from, entry) < JOIN_POS_TOL && angleDiff(from.rot, entry.rot + 180) < 1) return { drop: k, chain: [] };
-      const chain = solveJoin(from, entry, this._lead.level);
-      if (chain && chainTurn(chain) <= MAX_JOIN_TURN) return { drop: k, chain };
+      const chain = dist(from, entry) < JOIN_POS_TOL && angleDiff(from.rot, entry.rot + 180) < 1 ? [] : solveJoin(from, entry, this._lead.level);
+      if (chain && chainTurn(chain) <= MAX_JOIN_TURN && ok({ drop: k, chain })) found.push({ drop: k, chain });
     }
-    return null;
+    const best = gentlest(found.map((f) => f.chain));
+    return found.find((f) => f.chain === best) ?? null;
   }
 
   /**
@@ -539,9 +535,8 @@ export class StrokeFitter {
       range = [idx[0], idx[idx.length - 1]];
       if (range[0] < this.fixed) return this.red(); // never rework frozen pieces
     }
-    const join = this.joinTo(res.entry);
+    const join = this.joinTo(res.entry, (j) => this.crossingFits(o, res.splice, j, range));
     if (!join) return this.red();
-    if (!this.crossingFits(o, res.splice, join, range)) return this.red();
 
     // Rework the trailing pieces and join the entry.
     const keep = this.pieces.length - join.drop;

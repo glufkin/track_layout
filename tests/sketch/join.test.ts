@@ -3,7 +3,7 @@ import { type Pose, dist, angleDiff } from '../../src/geom/vec';
 import { D, validFlex } from '../../src/track/catalog';
 import { JOIN_POS_TOL, JOIN_ANGLE_TOL, buildGraph } from '../../src/track/graph';
 import { type PieceSpec, attachSpec, outPose, chainEnd, specToPiece } from '../../src/sketch/spec';
-import { solveJoin, JOIN_MAX_PIECES, MIN_ARC_SWEEP } from '../../src/sketch/join';
+import { chainTurn, solveJoin, JOIN_MAX_PIECES, MIN_ARC_SWEEP } from '../../src/sketch/join';
 
 const closesOn = (chain: PieceSpec[], to: Pose) => {
   const e = chainEnd(chain);
@@ -167,4 +167,32 @@ test('solveJoin never lays a flex curve flatter than MIN_ARC_SWEEP', () => {
     }
   }
   expect(curves).toBeGreaterThan(0);
+});
+
+test('solveJoin returns the gentlest closing chain, not the first one found', () => {
+  // The equal-tangent biarc closes here with a 196° loop; another ratio does it in about 134°.
+  const to = { x: 5.35, y: -1.04, rot: 46 };
+  const c = solveJoin({ x: 0, y: 0, rot: 0 }, to, 0)!;
+  closesOn(c, to);
+  expect(chainTurn(c)).toBeLessThan(140);
+});
+
+test('when a chain turning at most 90° exists, solveJoin never turns more than 270°', () => {
+  const r = rng(4242);
+  for (let i = 0; i < 300; i++) {
+    // A reference chain: straight, curve, straight, curve, with at most 90° of turn in all.
+    const a = (r() - 0.5) * 90, b = (r() - 0.5) * (90 - Math.abs(a));
+    const ref = [
+      attachSpec('flex-straight', false, { length: 0.1 + r() * 2 }, { x: 0, y: 0, rot: 0 }, 0),
+    ];
+    const add = (type: string, flipped: boolean, flex: { length: number } | { radius: number; sweep: number }) =>
+      ref.push(attachSpec(type, flipped, flex, chainEnd(ref), 0));
+    add('flex-curve', a < 0, { radius: 0.6 + r() * 7, sweep: Math.max(0.5, Math.abs(a)) });
+    add('flex-straight', false, { length: 0.1 + r() * 2 });
+    add('flex-curve', b < 0, { radius: 0.6 + r() * 7, sweep: Math.max(0.5, Math.abs(b)) });
+    expect(chainTurn(ref)).toBeLessThanOrEqual(90 + 1e-9);
+    const e = chainEnd(ref), to = { x: e.x, y: e.y, rot: e.rot + 180 };
+    const c = solveJoin({ x: 0, y: 0, rot: 0 }, to, 0);
+    if (c) { closesOn(c, to); expect(chainTurn(c), JSON.stringify(to)).toBeLessThanOrEqual(270); }
+  }
 });
