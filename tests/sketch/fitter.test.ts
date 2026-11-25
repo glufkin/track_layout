@@ -3,7 +3,8 @@ import { type Pose, type Vec2, angleDiff, dist } from '../../src/geom/vec';
 import { Doc } from '../../src/model/doc';
 import { type Piece, MAX_LEVEL, emptyLayout } from '../../src/model/types';
 import { attachSpec, outPose, specToPiece } from '../../src/sketch/spec';
-import { FREEHAND_SET, SHIFT_SET, STEP_DIST, StrokeFitter, crossId } from '../../src/sketch/fitter';
+import { pieceGeometry } from '../../src/track/catalog';
+import { FOLLOW_LIMIT, FREEHAND_SET, SHIFT_SET, STEP_DIST, StrokeFitter, crossId } from '../../src/sketch/fitter';
 
 const empty = () => new Doc(emptyLayout());
 const docOf = (pieces: Piece[]) => new Doc({ ...emptyLayout(), pieces });
@@ -197,9 +198,8 @@ test('crossing an existing curve turns the stroke red and stops appending', () =
   for (const s of f.pieces) expect(outPose(s, 1).x).toBeLessThan(1.6);
 });
 
-test('a loop that crosses its own earlier ghost records a ghost crossing', () => {
-  const f = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: 0, level: 0 });
-  // East along y = 0, round anticlockwise (up the screen) and back down across the first straight at x ≈ 2.
+/** East along y = 0, round anticlockwise (up the screen) and back down across the first straight at x ≈ 1.5. */
+function loopStroke(): Vec2[] {
   const pts: Vec2[] = polyline([{ x: 0, y: 0 }, { x: 4, y: 0 }]);
   const cx = 4, cy = -1.5, r = 1.5;
   for (let a = 5; a <= 180; a += 5) {
@@ -212,6 +212,12 @@ test('a loop that crosses its own earlier ghost records a ghost crossing', () =>
     pts.push({ x: 3 - r * Math.sin(t), y: -1.5 - r * Math.cos(t) });
   }
   pts.push(...polyline([{ x: 1.5, y: -1.5 }, { x: 1.5, y: 2 }]));
+  return pts;
+}
+
+test('a loop that crosses its own earlier ghost records a ghost crossing', () => {
+  const f = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: 0, level: 0 });
+  const pts = loopStroke();
   drag(f, pts);
   expect(f.redFrom).toBeNull();
   const ghost = f.crossings.filter((c) => c.ghost);
@@ -264,4 +270,88 @@ test('continuing from an open connector does not count the track it starts from 
   expect(f.redFrom).toBeNull();
   expect(f.crossings).toHaveLength(0);
   expect(f.pieces.length).toBeGreaterThan(1);
+});
+
+const ghostLength = (f: StrokeFitter) => f.pieces.reduce((t, s) => t + pieceGeometry(s).routes[0].path.length, 0);
+
+test('a ramp requested on a curving stroke: the ghost follows the turn and the ramp goes on the straight', () => {
+  const f = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: 0, level: 0 });
+  expect(f.requestRamp(1)).toBe(true);
+  drag(f, polyline([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 6 }]));
+  expect(ghostLength(f)).toBeLessThanOrEqual(f.length + 2);
+  expect(f.lead.pose.x).toBeLessThan(2.5);
+  expect(f.lead.pose.y).toBeGreaterThan(4);
+  const ramp = f.pieces.find((s) => s.type === 'ramp-2');
+  expect(ramp).toBeDefined();
+  expect(angleDiff(ramp!.rot, 90)).toBeLessThan(1e-6);
+  expect(f.lead.level).toBe(1);
+  expect(f.pendingRamp).toBe(0);
+});
+
+test('a huge jump is bounded: at most 64 pieces per point, never more ghost than stroke plus a piece', () => {
+  const f = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: null, level: 0 });
+  const n = f.addPoint({ x: 1000, y: 0 }, false);
+  expect(n).toBeGreaterThan(0);
+  expect(n).toBeLessThanOrEqual(64);
+  expect(ghostLength(f)).toBeLessThanOrEqual(f.length + 2);
+});
+
+test('a stroke the ghost cannot follow (doubling back, scribbling) does not run the ghost away from it', () => {
+  const scribble: Vec2[] = [{ x: 0, y: 0 }];
+  for (let r = 0; r < 10; r++) scribble.push({ x: r % 2 ? 0 : 1.5, y: 0 });
+  for (const corners of [[{ x: 0, y: 0 }, { x: 3, y: 0 }, { x: -6, y: 0 }], scribble]) {
+    const pts = polyline(corners);
+    const f = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: 0, level: 0 });
+    drag(f, pts);
+    expect(ghostLength(f)).toBeLessThanOrEqual(f.length + 2);
+    for (const s of f.pieces) {
+      const e = outPose(s, 1);
+      expect(Math.min(...pts.map((p) => dist(p, e)))).toBeLessThanOrEqual(FOLLOW_LIMIT);
+    }
+  }
+});
+
+test('a half circle of radius 4 stays within 0.35U of the stroke', () => {
+  const R = 4;
+  const f = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: null, level: 0 });
+  const pts: Vec2[] = Array.from({ length: 126 }, (_, k) => {
+    const a = ((k + 1) / 126) * Math.PI;
+    return { x: R * Math.sin(a), y: R - R * Math.cos(a) };
+  });
+  drag(f, pts);
+  expect(f.pieces.length).toBeGreaterThan(8);
+  for (const s of f.pieces) expect(Math.abs(dist(outPose(s, 1), { x: 0, y: R }) - R)).toBeLessThanOrEqual(0.35);
+});
+
+test('an up-ramp mates the previous piece at its connector 0', () => {
+  const f = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: 0, level: 0 });
+  drag(f, polyline([{ x: 0, y: 0 }, { x: 2, y: 0 }]));
+  expect(f.requestRamp(1)).toBe(true);
+  drag(f, polyline([{ x: 2, y: 0 }, { x: 7, y: 0 }]));
+  const i = f.pieces.findIndex((s) => s.type === 'ramp-2');
+  expect(i).toBeGreaterThan(0);
+  const prev = outPose(f.pieces[i - 1], 1), c0 = outPose(f.pieces[i], 0);
+  expect(dist(prev, c0)).toBeLessThan(1e-9);
+  expect(angleDiff(prev.rot, c0.rot + 180)).toBeLessThan(1e-9);
+  expect(f.frozen).toBe(i + 1);
+});
+
+test('frozen covers a crossing and the pieces mating its entry; a ghost crossing records where the stroke passes', () => {
+  const f = new StrokeFitter(crossDoc(), { pos: { x: 0, y: 0 }, heading: 0, level: 0 });
+  expect(f.frozen).toBe(0);
+  drag(f, polyline([{ x: 0, y: 0 }, { x: 5, y: 0 }]));
+  const c = f.crossings[0];
+  expect(c.through).toBe(c.index);
+  expect(f.frozen).toBe(c.index);
+
+  const g = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: 0, level: 0 });
+  drag(g, loopStroke());
+  const x = g.crossings.find((k) => k.ghost)!;
+  expect(x.through).toBeGreaterThan(x.index);
+  expect(g.frozen).toBeGreaterThanOrEqual(x.through);
+  // The stroke passes the crossover: pieces[through - 1] ends at one of its connectors, pieces[through] starts at another.
+  const conns = [0, 1, 2, 3].map((i) => outPose(g.pieces[x.index], i));
+  const mates = (p: Pose) => conns.some((q) => dist(p, q) < 1e-6 && angleDiff(p.rot, q.rot + 180) < 1e-6);
+  expect(mates(outPose(g.pieces[x.through - 1], 1))).toBe(true);
+  expect(mates(outPose(g.pieces[x.through], 0))).toBe(true);
 });

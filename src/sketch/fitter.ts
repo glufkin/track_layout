@@ -7,21 +7,30 @@
  *   except a `ramp-2` laid going down, which is entered at 1 and left at 0. `anchors[i]` is the
  *   outward pose piece i was attached to (where it is entered), so dropping trailing pieces k..
  *   leaves the lead at `anchors[k]`. `lead` is the outward pose of the ghost's leading end.
- * - `crossings[c]` is one crossover the stroke passes through. The crossover sits between
- *   `pieces[index - 1]` (or the stroke start, for index 0), which ends at the crossover's entry,
- *   and `pieces[index]` (or the lead, when index === pieces.length), which starts at its exit.
- *   Pieces before such an index are never reworked again by the fitter.
- *   - `ghost: false` (existing track): `splice` must be applied to the doc. Its `remove` ids are doc
- *     piece ids, or ids `crossId(c2, i)` naming `crossings[c2].splice.add[i]` of an EARLIER crossing
- *     c2 < c (a stroke crossing the same run twice). Apply the splices in order, remembering the id
- *     given to each added piece. `splice.add` holds the crossover itself and the refill straights.
+ * - `frozen`: pieces[0..frozen) are fixed (ramps, crossovers, the pieces mating a crossover's
+ *   entry, and everything before them). Release may only drop or rework pieces[frozen..]. When a
+ *   crossing's join chain is empty, the last piece mates the crossover entry and is frozen too.
+ * - `crossings[c]` is one crossover the stroke passes through. `through` is where the stroke passes
+ *   it: `pieces[through - 1]` (or the stroke start, for 0) ends at the crossover's entry, and
+ *   `pieces[through]` (or the lead, when through === pieces.length) starts at its exit.
+ *   `frozen >= through` for every crossing. `index` is where the crossover piece itself is:
+ *   - `ghost: false` (existing track): `index === through`; the crossover is not in `pieces` but in
+ *     `splice.add`, with the refill straights, and `splice` must be applied to the doc. Its `remove`
+ *     ids are doc piece ids, or ids `crossId(c2, i)` naming `crossings[c2].splice.add[i]` of an
+ *     EARLIER crossing c2 < c (a stroke crossing the same run twice). Apply the splices in order,
+ *     remembering the id given to each added piece.
  *   - `ghost: true` (the stroke crossed its own earlier ghost): the fitter has already replaced
  *     the crossed ghost straights inside `pieces` with refill straights plus the crossover, and
- *     `pieces[index]` IS that crossover (not in the chain order above: the stroke passes through
- *     its other route). The refill straights around it are laid along the crossed run, which may
- *     be against stroke order (mergeStraights copes with either orientation); their `anchors` are
- *     simply their connector 0. `splice` is empty ({ remove: [], add: [] }): nothing to apply.
- *     Indices (of `crossings` and of later pieces) shift when such a replacement changes the count.
+ *     `pieces[index]` IS that crossover (index < through; it is not in the chain order above).
+ *     The refill straights around it are laid along the crossed run, which may be against stroke
+ *     order (mergeStraights copes with either orientation); their `anchors` are simply their
+ *     connector 0. `splice` is empty ({ remove: [], add: [] }): nothing to apply. `index` and
+ *     `through` of every crossing (and later pieces) shift when such a replacement changes the count.
+ * - Pending ramp: any candidate may be laid while the stroke bends; `ramp-2` is appended as soon as
+ *   the stroke ahead of the lead offers 2U of straight run.
+ * - The ghost never outruns the stroke: it waits while the best piece would end more than
+ *   FOLLOW_LIMIT from the stroke without progressing along it, and while its length exceeds the
+ *   stroke's; at most 64 pieces are appended per point.
  * - `redFrom` is set when the next piece would cross track that is not plain straight (or a
  *   crossover could not be fitted). Nothing more is appended; the ghost is good up to the lead.
  */
@@ -59,7 +68,10 @@ const BLOCKED_LIMIT = 2 * LOOKAHEAD + 0.5;
 const MAX_JOIN_TURN = 120;
 /** After a piece, the lead's stroke position advances by at least this fraction of its length. */
 const MIN_ADVANCE = 0.25;
-const MAX_STEPS = 1000;
+/** Pieces appended per `addPoint` at most; the rest follows on later points. */
+const MAX_STEPS = 64;
+/** Wait (append nothing) while the best piece would end farther than this from the stroke without progressing along it. */
+export const FOLLOW_LIMIT = 0.75;
 const EPS = 1e-9;
 
 export interface Candidate { type: string; flipped: boolean }
@@ -74,13 +86,14 @@ export const SHIFT_SET: readonly Candidate[] = [{ type: 'straight-1', flipped: f
 const SHIFT_BEND: readonly Candidate[] = both('curve-l-22');
 
 export interface FitterStart { pos: Vec2; heading: number | null; level: number }
-export interface FitterCrossing { index: number; splice: Splice; ghost: boolean; type: 'crossover-90' | 'crossover-45' }
+export interface FitterCrossing {
+  index: number; through: number; splice: Splice; ghost: boolean; type: 'crossover-90' | 'crossover-45';
+}
 
 /** Id of `crossings[c].splice.add[i]` when a later crossing's splice removes it. */
 export const crossId = (c: number, i: number): string => 'cross:' + c + ':' + i;
 const ghostId = (i: number): string => 'ghost:' + i;
 
-const isStraight = (type: string): boolean => type.startsWith('straight-');
 const on45 = (deg: number): boolean => Math.abs(deg / 45 - Math.round(deg / 45)) < 1e-6;
 const dot = (a: Vec2, b: Vec2): number => a.x * b.x + a.y * b.y;
 const cross2 = (a: Vec2, b: Vec2): number => a.x * b.y - a.y * b.x;
@@ -180,8 +193,10 @@ export class StrokeFitter {
   private leadS = 0;
   /** Stroke position of each piece's anchor, parallel to `pieces`. */
   private readonly anchorS: number[] = [];
-  /** pieces[0..fixed) are never reworked by a crossing join (behind a ramp or an earlier crossing). */
+  /** pieces[0..fixed) are fixed: ramps, crossings, the pieces mating them and everything before. */
   private fixed = 0;
+  /** Total route length of the stroke-order ghost (crossovers passed counted by their crossing route). */
+  private ghostLen = 0;
   private readonly startPose: Pose;
 
   constructor(doc: Doc, start: FitterStart) {
@@ -198,6 +213,8 @@ export class StrokeFitter {
   get pendingRamp(): -1 | 0 | 1 { return this._pendingRamp; }
   get redFrom(): number | null { return this._redFrom; }
   get length(): number { return this.cum[this.cum.length - 1]; }
+  /** pieces[0..frozen) are fixed; release may only drop or rework pieces[frozen..]. */
+  get frozen(): number { return this.fixed; }
 
   /**
    * Request a ramp up (+1) or down (−1) at the next 2U straight stretch. `pendingRamp` is the net
@@ -281,6 +298,22 @@ export class StrokeFitter {
     return best;
   }
 
+  /**
+   * True when appending `spec` would leave the stroke behind: its end lies more than FOLLOW_LIMIT
+   * from the stroke and makes (almost) no progress along it, as when the stroke doubles back or
+   * turns away tighter than any piece can. The fitter then waits rather than run the ghost away.
+   * (A piece swinging wide round a sharp corner still progresses, so it is laid.)
+   */
+  private cannotFollow(spec: PieceSpec): boolean {
+    const end = outPose(spec, 1);
+    const len = pieceGeometry(spec).routes[0].path.length;
+    const s = this.project(end, this.leadS - 0.25, this.leadS + len + LOOKAHEAD);
+    let off: number;
+    if (s < this.length - EPS) off = dist(end, this.strokeAt(s));
+    else off = Math.abs(cross2(fromAngle(this.strokeHeading(this.length, 0)), sub(end, this.strokeAt(this.length))));
+    return off > FOLLOW_LIMIT && s - this.leadS < MIN_ADVANCE * len;
+  }
+
   /** First place (by stroke position, within [s0, s1]) where the stroke crosses a route of `spec`. */
   private strokeCrossing(spec: PieceSpec, s0: number, s1: number): { s: number; at: Vec2 } | null {
     const { cum, points } = this;
@@ -323,7 +356,6 @@ export class StrokeFitter {
   private candidates(shift: boolean): readonly Candidate[] {
     const h = this._lead.pose.rot;
     let set: readonly Candidate[] = shift ? (on45(h) ? SHIFT_SET : [...SHIFT_SET, ...SHIFT_BEND]) : FREEHAND_SET;
-    if (this._pendingRamp !== 0) set = set.filter((c) => isStraight(c.type));
     if (shift) {
       const kept = set.filter((c) => on45(outPose(this.attach(c), 1).rot));
       // From a heading no Shift piece can bring back onto the 8 directions, allow the whole set.
@@ -355,7 +387,7 @@ export class StrokeFitter {
       if (r === 'wait') return null;
     }
     const avail = this.length - this.leadS;
-    if (avail <= STEP_DIST) return null;
+    if (avail <= STEP_DIST || this.ghostLen > this.length) return null;
     const la = Math.min(LOOKAHEAD, avail);
     const sT = this.leadS + la;
     const target = this.strokeAt(sT), th = this.strokeHeading(sT, this._lead.pose.rot);
@@ -366,7 +398,11 @@ export class StrokeFitter {
     for (const { spec } of ranked) {
       const shape = shapeOf(spec);
       const touched = obstacles.filter((o) => near(shape, shapeOf(o.spec)));
-      if (touched.length === 0) { this.append(spec); return 1; }
+      if (touched.length === 0) {
+        if (this.cannotFollow(spec)) return null;
+        this.append(spec);
+        return 1;
+      }
       // Touching track: a crossing when the stroke actually crosses it nearby, else try the next candidate.
       let hit: { o: Obstacle; s: number; at: Vec2 } | null = null;
       for (const o of touched) {
@@ -390,6 +426,7 @@ export class StrokeFitter {
     const s = this.project(end, this.leadS - 0.25, this.leadS + len + LOOKAHEAD);
     this.leadS = Math.max(s, this.leadS + MIN_ADVANCE * len);
     this._lead = { pose: end, level };
+    this.ghostLen += len;
   }
 
   /** Place a pending ramp once the stroke runs 2U straight on from the lead. */
@@ -458,6 +495,7 @@ export class StrokeFitter {
     const keep = this.pieces.length - join.drop;
     this.leadS = keep < this.pieces.length ? this.anchorS[keep] : this.leadS;
     this._lead = { pose: keep < this.pieces.length ? this.anchors[keep] : this._lead.pose, level };
+    for (const s of this.pieces.slice(keep)) this.ghostLen -= pieceGeometry(s).routes[0].path.length;
     this.pieces.length = keep; this.anchors.length = keep; this.anchorS.length = keep;
     for (const s of join.chain) this.append(s);
 
@@ -470,12 +508,15 @@ export class StrokeFitter {
       this.pieces.splice(lo, hi - lo + 1, ...add);
       this.anchors.splice(lo, hi - lo + 1, ...add.map((s) => { const c = outPose(s, 0); return { x: c.x, y: c.y, rot: normDeg(c.rot + 180) }; }));
       this.anchorS.splice(lo, hi - lo + 1, ...add.map(() => sAt));
-      for (const c of this.crossings) if (c.index > hi) c.index += delta;
+      for (const c of this.crossings) {
+        if (c.index > hi) c.index += delta;
+        if (c.through > hi) c.through += delta;
+      }
       const xi = lo + add.findIndex((s) => s.type === res.type);
-      this.crossings.push({ index: xi, splice: { remove: [], add: [] }, ghost: true, type: res.type });
+      this.crossings.push({ index: xi, through: this.pieces.length, splice: { remove: [], add: [] }, ghost: true, type: res.type });
     } else {
       const c = this.crossings.length;
-      this.crossings.push({ index: this.pieces.length, splice: res.splice, ghost: false, type: res.type });
+      this.crossings.push({ index: this.pieces.length, through: this.pieces.length, splice: res.splice, ghost: false, type: res.type });
       const removed = new Set(res.splice.remove);
       this.world = new Doc({
         ...this.doc.layout,
@@ -490,6 +531,7 @@ export class StrokeFitter {
     this._lead = { pose: res.exit, level };
     this.leadS = Math.max(sCross, this.project(res.exit, sCross - 0.5, sCross + LOOKAHEAD + 1.5));
     this.fixed = this.pieces.length;
+    this.ghostLen += pieceGeometry({ type: res.type, flipped: false }).routes[0].path.length;
     return join.chain.length + 1;
   }
 }
