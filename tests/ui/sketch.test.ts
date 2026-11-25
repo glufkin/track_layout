@@ -240,6 +240,23 @@ test('middle-button drag pans in sketch mode without drawing; the wheel zooms', 
   expect(app.input.mode.kind).toBe('sketch');
 });
 
+test('a middle-button pan pressed mid-stroke cancels the stroke first', () => {
+  key('s');
+  down({ x: 0, y: 0 });
+  moveThrough([{ x: 0, y: 0 }, { x: 4, y: 0 }]);
+  expect(app.overlay.sketch?.ghost.length).toBeGreaterThan(0);
+  const cam = { ...app.camera };
+  canvas.dispatchEvent(pointer('pointerdown', scr({ x: 4, y: 0 }), { button: 1, buttons: 5 }));
+  expect(app.overlay.sketch).toBeUndefined();
+  canvas.dispatchEvent(pointer('pointermove', { x: scr({ x: 4, y: 0 }).x + 80, y: scr({ x: 4, y: 0 }).y }, { buttons: 5 }));
+  expect(app.camera.cx).toBeCloseTo(cam.cx - 1);
+  canvas.dispatchEvent(pointer('pointerup', scr({ x: 5, y: 0 }), { button: 1 }));
+  up({ x: 5, y: 0 });
+  expect(app.doc.layout.pieces).toHaveLength(0);
+  expect(app.history.canUndo).toBe(false);
+  expect(sounds.settle).toBe(0);
+});
+
 test('the Sound toggle mutes and unmutes the clicker', () => {
   const btn = document.querySelector<HTMLButtonElement>('[data-action="sound"]')!;
   let on = true;

@@ -449,6 +449,8 @@ export class Input {
     this.canvas.focus?.({ preventScroll: true });
     if (e.button === 1 || (e.button === 0 && this.space)) {
       e.preventDefault();
+      // A pan pressed mid-stroke abandons the stroke first: nothing is committed.
+      if (this.drag?.kind === 'sketch' || this.sketch.active) this.sketch.cancel();
       this.drag = { kind: 'pan', last: at };
       return;
     }
