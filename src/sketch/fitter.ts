@@ -28,9 +28,14 @@
  *     `through` of every crossing (and later pieces) shift when such a replacement changes the count.
  * - Pending ramp: any candidate may be laid while the stroke bends; `ramp-2` is appended as soon as
  *   the stroke ahead of the lead offers 2U of straight run.
- * - The ghost never outruns the stroke: it waits while the best piece would end more than
- *   FOLLOW_LIMIT from the stroke without progressing along it, and while its length exceeds the
- *   stroke's; at most 64 pieces are appended per point.
+ * - The ghost never outruns or wanders off the stroke. A piece is skipped when it would end more
+ *   than MAX_OFF from the rest of the stroke, or more than FOLLOW_LIMIT from it without progressing
+ *   along it or turning toward the stroke's heading (swinging round a corner is allowed). No piece
+ *   is laid while the ghost is LENGTH_SLACK longer than the stroke; at most 64 pieces per point.
+ * - A stall always resolves: while no piece can be laid, `leadS` is re-anchored to the latest
+ *   stroke point nearest the lead (within 1.5U), and once BLOCKED_LIMIT (2.5U) of stroke has been
+ *   drawn since the last piece, `redFrom` is set. A ghost crossing that would rework pieces below
+ *   `frozen` also turns the stroke red.
  * - `redFrom` is set when the next piece would cross track that is not plain straight (or a
  *   crossover could not be fitted). Nothing more is appended; the ghost is good up to the lead.
  */
@@ -53,6 +58,8 @@ export const START_DIST = 0.5;
 
 /** Score weight per degree between a candidate's end heading and the stroke's heading at the target. */
 export const W_HEADING = 0.01;
+/** Distance beyond the target point the heading term aims at (pure pursuit). */
+export const PURSUIT = 1.5;
 /** Score weight per degree a candidate turns: a small bias against zig-zags. */
 export const W_TURN = 0.001;
 /** Score weight per U a candidate falls short of the lookahead: prefers longer pieces (fewer clicks). */
@@ -62,8 +69,24 @@ export const TANGENT_WINDOW = 0.3;
 /** A pending ramp needs the stroke to stay within this of the lead's line for the ramp's length. */
 export const RAMP_TOL = 0.3;
 const RAMP_LEN = 2;
-/** With every candidate blocked by nearby track the stroke never crosses, give up (red) past this lead. */
+/** A ghost that has appended nothing while this much new stroke was drawn gives up (red). */
 const BLOCKED_LIMIT = 2 * LOOKAHEAD + 0.5;
+/**
+ * The ghost may be this much longer than the stroke (plus the piece being laid): swinging wide round
+ * a sharp corner or hairpin needs more track than the stroke drew there.
+ */
+const LENGTH_SLACK = 3;
+/**
+ * No piece ever ends farther than this from the rest of the stroke: room to swing round a 135°
+ * corner with medium curves (about 2U) but no further, so the ghost cannot wander off.
+ */
+export const MAX_OFF = 2.5;
+/** A far, non-progressing piece is still laid if it cuts the heading error by more than this (degrees). */
+const TURN_TOWARD = 1;
+/** A waiting ghost re-anchors to the latest stroke point within this of the lead. */
+const REANCHOR_DIST = 1.5;
+/** Stroke points this much farther from the lead than the nearest one still count as nearest. */
+const REANCHOR_SLACK = 0.05;
 /** A crossing join turning more than this in total is rejected as a loop. */
 const MAX_JOIN_TURN = 120;
 /** After a piece, the lead's stroke position advances by at least this fraction of its length. */
@@ -195,6 +218,8 @@ export class StrokeFitter {
   private readonly anchorS: number[] = [];
   /** pieces[0..fixed) are fixed: ramps, crossings, the pieces mating them and everything before. */
   private fixed = 0;
+  /** Stroke length when the ghost last appended (or its heading was fixed). */
+  private progressAt = 0;
   /** Total route length of the stroke-order ghost (crossovers passed counted by their crossing route). */
   private ghostLen = 0;
   private readonly startPose: Pose;
@@ -245,6 +270,7 @@ export class StrokeFitter {
       this.heading = normDeg(Math.round((Math.atan2(v.y, v.x) * 180) / Math.PI / q) * q);
       this.startPose.rot = this.heading;
       this._lead = { pose: { ...this.startPose }, level: this._lead.level };
+      this.progressAt = this.length;
     }
     let added = 0;
     for (let i = 0; i < MAX_STEPS; i++) {
@@ -301,17 +327,31 @@ export class StrokeFitter {
   /**
    * True when appending `spec` would leave the stroke behind: its end lies more than FOLLOW_LIMIT
    * from the stroke and makes (almost) no progress along it, as when the stroke doubles back or
-   * turns away tighter than any piece can. The fitter then waits rather than run the ghost away.
-   * (A piece swinging wide round a sharp corner still progresses, so it is laid.)
+   * turns away tighter than any piece can, unless it turns the lead toward the stroke's heading at
+   * the target (`targetHeading`): swinging wide round a sharp corner or a hairpin is following.
+   * A piece ending more than MAX_OFF from the rest of the stroke is never laid.
    */
-  private cannotFollow(spec: PieceSpec): boolean {
+  private cannotFollow(spec: PieceSpec, targetHeading: number): boolean {
     const end = outPose(spec, 1);
+    if (this.strokeDist(end, this.leadS - 1) > MAX_OFF) return true;
     const len = pieceGeometry(spec).routes[0].path.length;
     const s = this.project(end, this.leadS - 0.25, this.leadS + len + LOOKAHEAD);
     let off: number;
     if (s < this.length - EPS) off = dist(end, this.strokeAt(s));
     else off = Math.abs(cross2(fromAngle(this.strokeHeading(this.length, 0)), sub(end, this.strokeAt(this.length))));
-    return off > FOLLOW_LIMIT && s - this.leadS < MIN_ADVANCE * len;
+    if (off <= FOLLOW_LIMIT || s - this.leadS >= MIN_ADVANCE * len) return false;
+    return angleDiff(end.rot, targetHeading) >= angleDiff(this._lead.pose.rot, targetHeading) - TURN_TOWARD;
+  }
+
+  /** Distance from `p` to the stroke from position s0 to its end. */
+  private strokeDist(p: Vec2, s0: number): number {
+    const { cum, points } = this;
+    let d = dist(p, points[points.length - 1]);
+    for (let i = 0; i + 1 < points.length; i++) {
+      if (cum[i + 1] < s0) continue;
+      d = Math.min(d, distToSeg(p, points[i], points[i + 1]));
+    }
+    return d;
   }
 
   /** First place (by stroke position, within [s0, s1]) where the stroke crosses a route of `spec`. */
@@ -374,7 +414,12 @@ export class StrokeFitter {
     const len = pieceGeometry(spec).routes[0].path.length;
     const u = fromAngle(end.rot);
     const p = { x: end.x + u.x * (la - len), y: end.y + u.y * (la - len) };
-    return dist(p, target) + W_HEADING * angleDiff(end.rot, targetHeading)
+    // Pure pursuit: aim at a point PURSUIT beyond the target along the stroke, so a piece off the
+    // stroke is scored against a heading that leads back onto it.
+    const t = fromAngle(targetHeading);
+    const aim = { x: target.x + t.x * PURSUIT - p.x, y: target.y + t.y * PURSUIT - p.y };
+    const want = (Math.atan2(aim.y, aim.x) * 180) / Math.PI;
+    return dist(p, target) + W_HEADING * angleDiff(end.rot, want)
       + W_TURN * angleDiff(end.rot, this._lead.pose.rot) + W_SHORT * Math.max(0, la - len);
   }
 
@@ -387,7 +432,7 @@ export class StrokeFitter {
       if (r === 'wait') return null;
     }
     const avail = this.length - this.leadS;
-    if (avail <= STEP_DIST || this.ghostLen > this.length) return null;
+    if (avail <= STEP_DIST || this.ghostLen > this.length + LENGTH_SLACK) return null;
     const la = Math.min(LOOKAHEAD, avail);
     const sT = this.leadS + la;
     const target = this.strokeAt(sT), th = this.strokeHeading(sT, this._lead.pose.rot);
@@ -399,7 +444,7 @@ export class StrokeFitter {
       const shape = shapeOf(spec);
       const touched = obstacles.filter((o) => near(shape, shapeOf(o.spec)));
       if (touched.length === 0) {
-        if (this.cannotFollow(spec)) return null;
+        if (this.cannotFollow(spec, th)) continue;
         this.append(spec);
         return 1;
       }
@@ -411,8 +456,33 @@ export class StrokeFitter {
       }
       if (hit) return this.cross(hit.o, hit.at, this.strokeHeading(hit.s, this._lead.pose.rot), hit.s);
     }
-    // Every candidate is blocked by track the stroke runs beside but does not cross.
-    if (avail > BLOCKED_LIMIT) return this.red();
+    // No candidate can follow the stroke or get past nearby track: wait, re-anchored.
+    return this.stall();
+  }
+
+  /**
+   * The ghost is waiting with stroke to spare. Re-anchor `leadS` to the latest stroke point (at or
+   * after it) nearest the lead, if within REANCHOR_DIST, so the target moves on as the user keeps
+   * drawing (round a hairpin, or off a scribble). A ghost that has appended nothing while more than
+   * BLOCKED_LIMIT of new stroke was drawn gives up: red.
+   */
+  private stall(): null {
+    if (this.length - this.progressAt > BLOCKED_LIMIT) return this.red();
+    const { cum, points } = this, lead = this._lead.pose;
+    const near: Array<{ s: number; d: number }> = [];
+    for (let i = 0; i + 1 < points.length; i++) {
+      if (cum[i + 1] < this.leadS) continue;
+      const a = points[i], b = points[i + 1], l = cum[i + 1] - cum[i];
+      if (l < EPS) continue;
+      const t = Math.max(0, Math.min(1, dot(sub(lead, a), sub(b, a)) / (l * l)));
+      const s = Math.max(this.leadS, cum[i] + t * l);
+      near.push({ s, d: dist(lead, this.strokeAt(s)) });
+    }
+    if (near.length === 0) return null;
+    const dmin = Math.min(...near.map((n) => n.d));
+    if (dmin > REANCHOR_DIST) return null;
+    const s = Math.max(...near.filter((n) => n.d <= dmin + REANCHOR_SLACK).map((n) => n.s));
+    if (s > this.leadS) this.leadS = s;
     return null;
   }
 
@@ -427,6 +497,7 @@ export class StrokeFitter {
     this.leadS = Math.max(s, this.leadS + MIN_ADVANCE * len);
     this._lead = { pose: end, level };
     this.ghostLen += len;
+    this.progressAt = this.length;
   }
 
   /** Place a pending ramp once the stroke runs 2U straight on from the lead. */
@@ -487,6 +558,7 @@ export class StrokeFitter {
       const idx = res.splice.remove.map((id) => Number(id.slice('ghost:'.length))).sort((a, b) => a - b);
       if (idx.some((v, i) => v !== idx[0] + i)) return this.red();
       range = [idx[0], idx[idx.length - 1]];
+      if (range[0] < this.fixed) return this.red(); // never rework frozen pieces
     }
     const join = this.joinTo(res.entry);
     if (!join) return this.red();
@@ -532,6 +604,7 @@ export class StrokeFitter {
     this.leadS = Math.max(sCross, this.project(res.exit, sCross - 0.5, sCross + LOOKAHEAD + 1.5));
     this.fixed = this.pieces.length;
     this.ghostLen += pieceGeometry({ type: res.type, flipped: false }).routes[0].path.length;
+    this.progressAt = this.length;
     return join.chain.length + 1;
   }
 }

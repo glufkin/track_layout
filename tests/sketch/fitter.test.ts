@@ -4,7 +4,7 @@ import { Doc } from '../../src/model/doc';
 import { type Piece, MAX_LEVEL, emptyLayout } from '../../src/model/types';
 import { attachSpec, outPose, specToPiece } from '../../src/sketch/spec';
 import { pieceGeometry } from '../../src/track/catalog';
-import { FOLLOW_LIMIT, FREEHAND_SET, SHIFT_SET, STEP_DIST, StrokeFitter, crossId } from '../../src/sketch/fitter';
+import { FREEHAND_SET, MAX_OFF, SHIFT_SET, STEP_DIST, StrokeFitter, crossId } from '../../src/sketch/fitter';
 
 const empty = () => new Doc(emptyLayout());
 const docOf = (pieces: Piece[]) => new Doc({ ...emptyLayout(), pieces });
@@ -304,10 +304,13 @@ test('a stroke the ghost cannot follow (doubling back, scribbling) does not run 
     const f = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: 0, level: 0 });
     drag(f, pts);
     expect(ghostLength(f)).toBeLessThanOrEqual(f.length + 2);
+    // Turning back swings out by about one U-turn of small curves (2·R_S ≈ 1.17, 1.42 measured
+    // after a medium curve); it never marches off.
     for (const s of f.pieces) {
       const e = outPose(s, 1);
-      expect(Math.min(...pts.map((p) => dist(p, e)))).toBeLessThanOrEqual(FOLLOW_LIMIT);
+      expect(Math.min(...pts.map((p) => dist(p, e)))).toBeLessThanOrEqual(1.5);
     }
+    if (f.redFrom === null) expect(dist(f.lead.pose, pts[pts.length - 1])).toBeLessThanOrEqual(1.25);
   }
 });
 
@@ -354,4 +357,67 @@ test('frozen covers a crossing and the pieces mating its entry; a ghost crossing
   const mates = (p: Pose) => conns.some((q) => dist(p, q) < 1e-6 && angleDiff(p.rot, q.rot + 180) < 1e-6);
   expect(mates(outPose(g.pieces[x.through - 1], 1))).toBe(true);
   expect(mates(outPose(g.pieces[x.through], 0))).toBe(true);
+});
+
+/** Points every 0.1 round an arc of radius r about `c`, from angle a0 to a1 (degrees, y down). */
+function arcPts(c: Vec2, r: number, a0: number, a1: number): Vec2[] {
+  const n = Math.max(2, Math.ceil((Math.abs(a1 - a0) * Math.PI * r) / 180 / 0.1));
+  return Array.from({ length: n }, (_, k) => {
+    const a = ((a0 + ((a1 - a0) * (k + 1)) / n) * Math.PI) / 180;
+    return { x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) };
+  });
+}
+const SW = { x: -Math.SQRT1_2, y: Math.SQRT1_2 };
+const uTurn = (r: number, after: number) => [
+  ...polyline([{ x: 0, y: 0 }, { x: 3, y: 0 }]),
+  ...arcPts({ x: 3, y: r }, r, -90, 90),
+  ...polyline([{ x: 3, y: 2 * r }, { x: 3 - after, y: 2 * r }]),
+];
+const scribbleThenEast = () => {
+  const c: Vec2[] = [{ x: 0, y: 0 }];
+  for (let r = 0; r < 10; r++) c.push({ x: r % 2 ? 0 : 1.5, y: 0 });
+  c.push({ x: 15, y: 0 });
+  return polyline(c);
+};
+const tinyScribble = () => {
+  const c: Vec2[] = [{ x: 0, y: 0 }];
+  for (let r = 0; r < 30; r++) c.push({ x: r % 2 ? 0 : 0.6, y: 0 });
+  return polyline(c);
+};
+const STALL_PROBES: Array<[string, boolean, Vec2[]]> = [
+  ['Shift: east 3 then a 135° corner, SW 12', true, polyline([{ x: 0, y: 0 }, { x: 3, y: 0 }, { x: 3 + 12 * SW.x, y: 12 * SW.y }])],
+  ['freehand: east 3 then a 135° corner, SW 12', false, polyline([{ x: 0, y: 0 }, { x: 3, y: 0 }, { x: 3 + 12 * SW.x, y: 12 * SW.y }])],
+  ['Shift: U-turn r 0.5 then west 15', true, uTurn(0.5, 15)],
+  ['Shift: U-turn r 0.3 then west 15', true, uTurn(0.3, 15)],
+  ['freehand: hairpin r 0.2 then west 10', false, uTurn(0.2, 10)],
+  ['freehand: scribble then east 15', false, scribbleThenEast()],
+  ['freehand: east 3, back 1, north 5', false, polyline([{ x: 0, y: 0 }, { x: 3, y: 0 }, { x: 2, y: 0 }, { x: 2, y: -5 }])],
+  ['freehand: tiny scribble', false, tinyScribble()],
+  ['Shift: tiny scribble', true, tinyScribble()],
+];
+
+for (const [name, shift, pts] of STALL_PROBES) {
+  test(`never stalls silently: ${name}`, () => {
+    const f = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: 0, level: 0 });
+    drag(f, pts, shift);
+    const end = pts[pts.length - 1];
+    // Never wanders off: every piece ends within MAX_OFF of the stroke.
+    for (const s of f.pieces) {
+      const e = outPose(s, 1);
+      expect(Math.min(...[{ x: 0, y: 0 }, ...pts].map((p) => dist(p, e)))).toBeLessThanOrEqual(MAX_OFF + 0.1);
+    }
+    if (f.redFrom === null) expect(dist(f.lead.pose, end)).toBeLessThanOrEqual(1.25);
+    // Red only once the ghost has stopped: no further pieces.
+    else expect(drag(f, polyline([end, { x: end.x, y: end.y + 3 }]), shift)).toBe(0);
+  });
+}
+
+test('sharp corners, U-turns and hairpins are followed round, not given up on', () => {
+  for (const i of [0, 1, 2, 3, 4]) {
+    const [, shift, pts] = STALL_PROBES[i];
+    const f = new StrokeFitter(empty(), { pos: { x: 0, y: 0 }, heading: 0, level: 0 });
+    drag(f, pts, shift);
+    expect(f.redFrom).toBeNull();
+    expect(dist(f.lead.pose, pts[pts.length - 1])).toBeLessThanOrEqual(1.25);
+  }
 });
