@@ -68,8 +68,10 @@ export class Clicker {
     this.blip(TICK_HZ * this.jitter(), TICK_S, TICK_GAIN);
   }
 
+  /** The commit sound: bypasses the rate limit (it must not be lost to the last tick) but counts for it. */
   settle(): void {
-    if (this.limited()) return;
+    if (!this.enabled || !this.ctx) return;
+    this.last = this.now();
     this.blip(SETTLE_HZ * this.jitter(), TICK_S * 1.5, TICK_GAIN);
   }
 

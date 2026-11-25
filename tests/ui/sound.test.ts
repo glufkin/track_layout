@@ -49,12 +49,14 @@ test('rate limit: 5 ticks within 30 ms start 1 source; 50 ms apart start 2', () 
   expect(MIN_CLICK_MS).toBe(40);
 });
 
-test('settle shares the rate limit; bonk does not', () => {
+test('settle on commit is never swallowed by a tick just before it, but a tick right after it is; bonk is not limited', () => {
   const a = make();
   a.c.tick(); a.t.v = 10; a.c.settle();
-  expect(a.f.started.length).toBe(1);
+  expect(a.f.started.length).toBe(2);
+  a.t.v = 20; a.c.tick();
+  expect(a.f.started.length).toBe(2);
   a.c.bonk(); a.c.bonk();
-  expect(a.f.started.length).toBe(3);
+  expect(a.f.started.length).toBe(4);
 });
 
 test('mute stores off and silences; re-enable stores on', () => {
