@@ -483,3 +483,22 @@ test('a handle press without movement issues no command; an unselected flex piec
   drag(toScreen({ x: 1, y: 0 }), toScreen({ x: 2.5, y: 0 }));
   expect(app.doc.piece('f1')!.flex).toEqual({ length: 1 });
 });
+
+test('jitter on a flex handle (within DRAG_PX) is not a resize: no history entry', () => {
+  flexAt();
+  const from = toScreen({ x: 1, y: 0 });
+  drag(from, { x: from.x + 3, y: from.y });
+  expect(app.doc.piece('f1')!.flex).toEqual({ length: 1 });
+  expect(app.history.canUndo).toBe(false);
+});
+
+test('a click on a flex handle sitting on a near-miss ring closes the gap', () => {
+  nearMissLayout();
+  const a2 = app.doc.piece('a2')!;
+  app.loadLayout({ ...app.doc.layout, pieces: app.doc.layout.pieces.map((p) => (p.id === 'a2' ? { ...a2, type: 'flex-straight', flex: { length: 1 } } : p)) });
+  app.selection = new Set(['a2']);
+  expect(app.doc.graph.nearMisses).toHaveLength(1);
+  click(ringAt());
+  expect(app.doc.graph.nearMisses).toEqual([]);
+  expect(app.history.canUndo).toBe(true);
+});

@@ -39,7 +39,8 @@ type Drag =
   | { kind: 'press'; start: Vec2; hit: string | null; shift: boolean; ring: [WorldConnector, WorldConnector] | null }
   | { kind: 'move'; ids: string[]; start: Vec2; pivot: Vec2; poses: Map<string, Pose> }
   | { kind: 'box'; start: Vec2; shift: boolean }
-  | { kind: 'resize'; id: string; end: 0 | 1; next: FlexResult | null }
+  /** A press on a flex end handle: a resize once moved past DRAG_PX (`moved`), else a click (on `ring`, if any). */
+  | { kind: 'resize'; id: string; end: 0 | 1; next: FlexResult | null; start: Vec2; moved: boolean; ring: [WorldConnector, WorldConnector] | null }
   | { kind: 'sketch' };
 
 const isTextTarget = (t: EventTarget | null): boolean =>
@@ -466,7 +467,10 @@ export class Input {
 
     const w = this.toWorld(at);
     const handle = this.handleAt(w);
-    if (handle) { this.drag = { kind: 'resize', ...handle, next: null }; return; }
+    if (handle) {
+      this.drag = { kind: 'resize', ...handle, next: null, start: at, moved: false, ring: e.shiftKey ? null : this.nearMissAt(w) };
+      return;
+    }
     const train = e.shiftKey ? null : this.trainAt(w);
     if (train) {
       this.app.selection = new Set();
@@ -506,6 +510,8 @@ export class Input {
       return;
     }
     if (d.kind === 'resize') {
+      if (!d.moved && dist(at, d.start) <= DRAG_PX) return;
+      d.moved = true;
       const p = app.doc.piece(d.id);
       if (!p) return;
       const next = flexResize(p, d.end, this.toWorld(at), this.alt);
@@ -542,6 +548,8 @@ export class Input {
     if (e.type === 'pointercancel') { app.preview = null; app.box = null; app.requestRender(); return; }
     if (d.kind === 'resize') {
       app.preview = null;
+      // Never moved past DRAG_PX: a click, which closes a near miss the handle sits on.
+      if (!d.moved) { if (d.ring) this.closeNearMiss(d.ring); else app.requestRender(); return; }
       const p = app.doc.piece(d.id);
       if (p && d.next && !sameResize(p, d.next)) app.exec(withLifting(app.doc, [d.id], resizeFlex(d.id, d.next)));
       else app.requestRender();
