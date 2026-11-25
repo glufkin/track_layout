@@ -8,7 +8,7 @@ import { Simulation } from '../../src/sim/simulation';
 import { attachSpec, outPose, specToPiece } from '../../src/sketch/spec';
 import { StrokeFitter } from '../../src/sketch/fitter';
 import { type StrokeStart, beginStroke, finishStroke, strokeDoc } from '../../src/sketch/stroke';
-import { pieceGeometry } from '../../src/track/catalog';
+import { D, pieceGeometry } from '../../src/track/catalog';
 import { connKey, worldRoutePath } from '../../src/track/graph';
 
 const R = 0.5;
@@ -350,5 +350,22 @@ test('a diverging start looping back toward its own run commits no overlap', () 
   const cmd = finishStroke(doc, start, fitter, end, R);
   expect(cmd).not.toBeNull();
   new History().exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
+});
+
+test('a stroke across a double track commits no overlap (the crossover would reach the second track)', () => {
+  const near = run('a', 'straight-2', { x: -1, y: 0, rot: 0 }, 4);
+  const far = run('b', 'straight-2', { x: -1, y: D, rot: 0 }, 4);
+  const doc = docOf([...near, ...far]);
+  const { cmd } = sketch(doc, [{ x: 3.1, y: -4 }, { x: 3.1, y: 5 }]);
+  if (cmd) new History().exec(cmd, doc);
+  expect(doc.graph.overlaps).toEqual([]);
+});
+
+test('a stroke crossing a straight 0.8U from its open end commits no overlap', () => {
+  const track = run('v', 'straight-2', { x: 3, y: -3.2, rot: 90 }, 2); // open ends at y = -3.2 and 0.8
+  const doc = docOf(track);
+  const { cmd } = sketch(doc, [{ x: 0, y: 0 }, { x: 7, y: 0 }]);
+  if (cmd) new History().exec(cmd, doc);
   expect(doc.graph.overlaps).toEqual([]);
 });

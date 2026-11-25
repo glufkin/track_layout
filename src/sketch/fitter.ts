@@ -41,9 +41,9 @@
  */
 import { type Pose, type Vec2, angleDiff, dist, fromAngle, normDeg, sub } from '../geom/vec';
 import { Doc } from '../model/doc';
-import { MAX_LEVEL } from '../model/types';
+import { MAX_LEVEL, type Piece } from '../model/types';
 import { pieceGeometry } from '../track/catalog';
-import { JOIN_POS_TOL, OVERLAP_CLEARANCE, type RouteShape, distToSeg, routeShape, shapesNear } from '../track/graph';
+import { JOIN_POS_TOL, OVERLAP_CLEARANCE, type RouteShape, buildGraph, distToSeg, routeShape, shapesNear } from '../track/graph';
 import { solveJoin } from './join';
 import { type PieceSpec, attachSpec, outPose, specToPiece } from './spec';
 import { type Splice, crossingSplice } from './splice';
@@ -504,6 +504,25 @@ export class StrokeFitter {
     return null;
   }
 
+  /**
+   * True when a crossing's new track (crossover, refill straights and the join chain) overlaps no
+   * other same-level track: the world (minus the pieces the splice removes) and the ghost pieces
+   * kept (minus the reworked tail and, for a ghost crossing, the crossed ghost straights in `range`).
+   * Track joined to the new pieces, directly or through one piece, is exempt as in the graph's
+   * overlap test.
+   */
+  private crossingFits(o: Obstacle, splice: Splice, join: { drop: number; chain: PieceSpec[] }, range: [number, number] | null): boolean {
+    const removed = new Set(o.ghost === null ? splice.remove : []);
+    const keep = this.pieces.length - join.drop;
+    const others: Piece[] = this.world.layout.pieces.filter((p) => !removed.has(p.id));
+    this.pieces.slice(0, keep).forEach((s, i) => {
+      if (!range || i < range[0] || i > range[1]) others.push(specToPiece(s, ghostId(i)));
+    });
+    const tag = '\u0000new:';
+    const fresh = [...splice.add, ...join.chain].map((s, i) => specToPiece(s, tag + i));
+    return !buildGraph([...others, ...fresh]).overlaps.some(([a, b]) => a.startsWith(tag) || b.startsWith(tag));
+  }
+
   /** Insert a crossover where the stroke crosses obstacle `o`, re-join to it and continue past it. */
   private cross(o: Obstacle, at: Vec2, heading: number, sCross: number): number | null {
     const level = this._lead.level;
@@ -522,6 +541,7 @@ export class StrokeFitter {
     }
     const join = this.joinTo(res.entry);
     if (!join) return this.red();
+    if (!this.crossingFits(o, res.splice, join, range)) return this.red();
 
     // Rework the trailing pieces and join the entry.
     const keep = this.pieces.length - join.drop;
