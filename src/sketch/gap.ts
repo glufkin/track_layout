@@ -1,7 +1,7 @@
 import { type Pose, normDeg } from '../geom/vec';
 import type { Doc } from '../model/doc';
 import { pieceGeometry } from '../track/catalog';
-import { type WorldConnector, connKey, worldConnectors } from '../track/graph';
+import { type WorldConnector, buildGraph, connKey, worldConnectors } from '../track/graph';
 import { batch, deletePieces, placePieces, withLifting } from '../editor/commands';
 import type { Command } from '../editor/history';
 import { solveJoin } from './join';
@@ -56,13 +56,13 @@ const COMBOS: Array<[number, number]> = [[1, 0], [0, 1], [2, 0], [0, 2], [1, 1],
 
 /**
  * Close the near miss between open connectors `a` and `b` with flex (and catalogue) pieces, as one
- * command; null when nothing fits. Tries the bare gap first, then consumes up to two plain pieces
+ * command; null when nothing fits (a chain overlapping other track does not fit). Tries the bare gap first, then consumes up to two plain pieces
  * backwards from `a`, from `b`, then from both, re-solving between the new outer poses.
  */
 export function closeGap(doc: Doc, a: WorldConnector, b: WorldConnector): Command | null {
   const level = a.level;
   const direct = solveJoin(poseOf(a), poseOf(b), level);
-  if (direct) return build(doc, [], direct);
+  if (direct && fits(doc, [], direct)) return build(doc, [], direct);
   const sa = walkBack(doc, a, new Set([b.pieceId]));
   const sb = walkBack(doc, b, new Set([a.pieceId]));
   for (const [na, nb] of COMBOS) {
@@ -71,10 +71,22 @@ export function closeGap(doc: Doc, a: WorldConnector, b: WorldConnector): Comman
     // On a short loop the two walks can meet: neither may consume a piece the other keeps or mates with.
     if (A.consumed.some((id) => B.consumed.includes(id) || id === B.anchor)) continue;
     if (B.consumed.some((id) => id === A.anchor)) continue;
+    const consumed = [...A.consumed, ...B.consumed];
     const chain = solveJoin(A.pose, B.pose, level);
-    if (chain) return build(doc, [...A.consumed, ...B.consumed], chain);
+    if (chain && fits(doc, consumed, chain)) return build(doc, consumed, chain);
   }
   return null;
+}
+
+/**
+ * True when `chain` overlaps no track left after removing `consumed` (pieces joined to it, directly
+ * or through one piece, are exempt as in the graph's overlap test).
+ */
+function fits(doc: Doc, consumed: string[], chain: PieceSpec[]): boolean {
+  const gone = new Set(consumed);
+  const tag = '\u0000gap:';
+  const pieces = [...doc.layout.pieces.filter((p) => !gone.has(p.id)), ...chain.map((s, i) => specToPiece(s, tag + i))];
+  return !buildGraph(pieces).overlaps.some(([x, y]) => x.startsWith(tag) || y.startsWith(tag));
 }
 
 function build(doc: Doc, consumed: string[], chain: PieceSpec[]): Command {

@@ -104,3 +104,23 @@ test('a train on a consumed piece is lifted', () => {
   expect(doc.train('t1')).toMatchObject({ head: null, running: false });
   expect(doc.train('t1')!.lifted).not.toBeNull();
 });
+
+test('a close whose new chain would overlap other track is skipped for one that fits, else null', () => {
+  // As above, with a loose straight standing across a3 (an existing overlap with a3 only).
+  const post = attach('o', 'straight-1', { x: 2.5, y: 0.1, rot: 90 });
+  const doc = new Doc({ ...emptyLayout(), pieces: [...line({ x: 3, y: 0.03, rot: 1 }), post] });
+  const [a, b] = doc.graph.nearMisses[0];
+  const cmd = closeGap(doc, a, b)!;
+  expect(cmd).not.toBeNull();
+  cmd.do(doc);
+  expect(doc.graph.nearMisses).toEqual([]);
+  const fresh = new Set(doc.layout.pieces.filter((p) => !/^([ab]\d|o)$/.test(p.id)).map((p) => p.id));
+  expect(doc.graph.overlaps.filter(([x, y]) => fresh.has(x) || fresh.has(y))).toEqual([]);
+  expect(doc.piece('a3')).toBeDefined(); // consuming a3 would run the chain past the post
+
+  // With posts across both a3 and b1, nothing fits.
+  const post2 = attach('q', 'straight-1', { x: 3.5, y: 0.13, rot: 90 });
+  const doc2 = new Doc({ ...emptyLayout(), pieces: [...line({ x: 3, y: 0.03, rot: 1 }), post, post2] });
+  const [a2, b2] = doc2.graph.nearMisses[0];
+  expect(closeGap(doc2, a2, b2)).toBeNull();
+});
