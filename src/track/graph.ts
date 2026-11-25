@@ -30,7 +30,7 @@ export function worldConnectors(p: Piece): WorldConnector[] {
   }));
 }
 
-export function worldRoutePath(p: Piece, route: number): RoutePath {
+export function worldRoutePath(p: Omit<Piece, 'id'>, route: number): RoutePath {
   return transformPath(pieceGeometry(p).routes[route].path, p);
 }
 
@@ -80,23 +80,24 @@ const MAX_STEP_DEG = 5;
 
 const cross = (o: Vec2, a: Vec2, b: Vec2): number => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
 
-function distToSeg(p: Vec2, a: Vec2, b: Vec2): number {
+export function distToSeg(p: Vec2, a: Vec2, b: Vec2): number {
   const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
   const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
 /** Distance between two segments: 0 if they intersect, else the smallest endpoint-to-segment distance. */
-function segSegDist(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): number {
+export function segSegDist(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): number {
   const d1 = cross(q1, q2, p1), d2 = cross(q1, q2, p2), d3 = cross(p1, p2, q1), d4 = cross(p1, p2, q2);
   if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return 0;
   return Math.min(distToSeg(p1, q1, q2), distToSeg(p2, q1, q2), distToSeg(q1, p1, p2), distToSeg(q2, p1, p2));
 }
 
-interface Shape { lines: Vec2[][]; box: [number, number, number, number] }
+/** A piece's route centrelines; `box` is their bounding box padded by OVERLAP_CLEARANCE. */
+export interface RouteShape { lines: Vec2[][]; box: [number, number, number, number] }
 
 /** Route centrelines as polylines sampled every <= 1/16U and <= 5 degrees of turn. */
-function makeShape(p: Piece): Shape {
+export function routeShape(p: Omit<Piece, 'id'>): RouteShape {
   const lines: Vec2[][] = [];
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (let r = 0; r < pieceGeometry(p).routes.length; r++) {
@@ -115,7 +116,8 @@ function makeShape(p: Piece): Shape {
   return { lines, box: [x0 - m, y0 - m, x1 + m, y1 + m] };
 }
 
-function shapesOverlap(a: Shape, b: Shape): boolean {
+/** True when any route of `a` comes within OVERLAP_CLEARANCE of any route of `b` (the overlap test). */
+export function shapesNear(a: RouteShape, b: RouteShape): boolean {
   if (a.box[0] > b.box[2] || b.box[0] > a.box[2] || a.box[1] > b.box[3] || b.box[1] > a.box[3]) return false;
   for (const la of a.lines) for (const lb of b.lines) {
     for (let i = 0; i + 1 < la.length; i++) for (let j = 0; j + 1 < lb.length; j++) {
@@ -123,6 +125,13 @@ function shapesOverlap(a: Shape, b: Shape): boolean {
     }
   }
   return false;
+}
+
+/** Distance from `pt` to the nearest route centreline of the shape. */
+export function shapeDist(s: RouteShape, pt: Vec2): number {
+  let d = Infinity;
+  for (const line of s.lines) for (let i = 0; i + 1 < line.length; i++) d = Math.min(d, distToSeg(pt, line[i], line[i + 1]));
+  return d;
 }
 
 export function buildGraph(pieces: Piece[]): TrackGraph {
@@ -149,7 +158,7 @@ export function buildGraph(pieces: Piece[]): TrackGraph {
   }
 
   // Overlaps via a 1U spatial hash over centreline bounding boxes (padded by the clearance).
-  const shapes = pieces.map(makeShape);
+  const shapes = pieces.map(routeShape);
   const joinedPieces = new Set<string>();
   const nbrs = new Map<string, Set<string>>();
   const link = (a: string, b: string) => { const l = nbrs.get(a); if (l) l.add(b); else nbrs.set(a, new Set([b])); };
@@ -184,7 +193,7 @@ export function buildGraph(pieces: Piece[]): TrackGraph {
       seen.add(pk);
       if (pieces[i].level !== pieces[j].level || pieces[i].id === pieces[j].id) continue;
       if (joinedPieces.has(pieces[i].id + '|' + pieces[j].id)) continue;
-      if (shapesOverlap(shapes[i], shapes[j])) {
+      if (shapesNear(shapes[i], shapes[j])) {
         const [a, b] = pieces[i].id < pieces[j].id ? [pieces[i].id, pieces[j].id] : [pieces[j].id, pieces[i].id];
         overlaps.push([a, b]);
       }

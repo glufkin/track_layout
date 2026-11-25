@@ -40,11 +40,10 @@
  *   crossover could not be fitted). Nothing more is appended; the ghost is good up to the lead.
  */
 import { type Pose, type Vec2, angleDiff, dist, fromAngle, normDeg, sub } from '../geom/vec';
-import { samplePath, transformPath } from '../geom/path';
 import { Doc } from '../model/doc';
 import { MAX_LEVEL } from '../model/types';
 import { pieceGeometry } from '../track/catalog';
-import { JOIN_POS_TOL, OVERLAP_CLEARANCE } from '../track/graph';
+import { JOIN_POS_TOL, OVERLAP_CLEARANCE, type RouteShape, distToSeg, routeShape, shapesNear } from '../track/graph';
 import { solveJoin } from './join';
 import { type PieceSpec, attachSpec, outPose, specToPiece } from './spec';
 import { type Splice, crossingSplice } from './splice';
@@ -123,40 +122,18 @@ const cross2 = (a: Vec2, b: Vec2): number => a.x * b.y - a.y * b.x;
 
 // ---- route polylines and proximity ----
 
-interface Shape { lines: Vec2[][]; box: [number, number, number, number] }
 /** Cached per spec object, checked against its pose so a piece changed in place is re-sampled. */
-const shapeCache = new WeakMap<object, { key: string; shape: Shape }>();
+const shapeCache = new WeakMap<object, { key: string; shape: RouteShape }>();
 const poseKey = (p: PieceSpec): string =>
   [p.type, p.x, p.y, p.rot, p.flipped, p.flex ? JSON.stringify(p.flex) : ''].join('|');
 
-/** Route centrelines sampled every <= 1/16U and <= 5° (as the overlap check in graph.ts). */
-function shapeOf(p: PieceSpec): Shape {
+function shapeOf(p: PieceSpec): RouteShape {
   const key = poseKey(p);
   const hit = shapeCache.get(p);
   if (hit && hit.key === key) return hit.shape;
-  const lines: Vec2[][] = [];
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const r of pieceGeometry(p).routes) {
-    const path = transformPath(r.path, p);
-    const turn = path.segments.reduce((t, g) => t + (g.kind === 'arc' ? Math.abs(g.sweep) : 0), 0);
-    const n = Math.max(1, Math.ceil(path.length * 16), Math.ceil(turn / 5));
-    const pts: Vec2[] = [];
-    for (let i = 0; i <= n; i++) {
-      const v = samplePath(path, (path.length * i) / n).pos;
-      pts.push(v);
-      x0 = Math.min(x0, v.x); y0 = Math.min(y0, v.y); x1 = Math.max(x1, v.x); y1 = Math.max(y1, v.y);
-    }
-    lines.push(pts);
-  }
-  const shape: Shape = { lines, box: [x0, y0, x1, y1] };
+  const shape = routeShape(p);
   shapeCache.set(p, { key, shape });
   return shape;
-}
-
-function distToSeg(p: Vec2, a: Vec2, b: Vec2): number {
-  const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
-  const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
-  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
 /** Parameters (t along a→b, u along c→d) where two segments cross, or null. */
@@ -166,23 +143,6 @@ function segCross(a: Vec2, b: Vec2, c: Vec2, d: Vec2): { t: number; u: number } 
   const ac = sub(c, a);
   const t = cross2(ac, s) / den, u = cross2(ac, r) / den;
   return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? { t, u } : null;
-}
-
-function segSegDist(a: Vec2, b: Vec2, c: Vec2, d: Vec2): number {
-  if (segCross(a, b, c, d)) return 0;
-  return Math.min(distToSeg(a, c, d), distToSeg(b, c, d), distToSeg(c, a, b), distToSeg(d, a, b));
-}
-
-/** True when any route of `a` comes within OVERLAP_CLEARANCE of any route of `b`. */
-function near(a: Shape, b: Shape): boolean {
-  const m = OVERLAP_CLEARANCE;
-  if (a.box[0] > b.box[2] + m || b.box[0] > a.box[2] + m || a.box[1] > b.box[3] + m || b.box[1] > a.box[3] + m) return false;
-  for (const la of a.lines) for (const lb of b.lines) {
-    for (let i = 0; i + 1 < la.length; i++) for (let j = 0; j + 1 < lb.length; j++) {
-      if (segSegDist(la[i], la[i + 1], lb[j], lb[j + 1]) < m) return true;
-    }
-  }
-  return false;
 }
 
 /** Same-level track a candidate is checked against: existing (effective) doc pieces or earlier ghost pieces. */
@@ -442,7 +402,7 @@ export class StrokeFitter {
     const obstacles = this.obstacles();
     for (const { spec } of ranked) {
       const shape = shapeOf(spec);
-      const touched = obstacles.filter((o) => near(shape, shapeOf(o.spec)));
+      const touched = obstacles.filter((o) => shapesNear(shape, shapeOf(o.spec)));
       if (touched.length === 0) {
         if (this.cannotFollow(spec, th)) continue;
         this.append(spec);
@@ -515,7 +475,7 @@ export class StrokeFitter {
       ? attachSpec('ramp-2', false, undefined, lead, this._lead.level, 0)
       : attachSpec('ramp-2', false, undefined, lead, this._lead.level - 1, 1);
     const shape = shapeOf(spec);
-    if (this.obstacles().some((o) => near(shape, shapeOf(o.spec)))) return 'no';
+    if (this.obstacles().some((o) => shapesNear(shape, shapeOf(o.spec)))) return 'no';
     this.append(spec, up ? 1 : 0);
     this._pendingRamp = 0;
     this.fixed = this.pieces.length;

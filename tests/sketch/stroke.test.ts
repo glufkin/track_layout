@@ -57,6 +57,7 @@ test('from an empty table: buffers at both ends, no open connectors; one exec, o
   expect(cmd).not.toBeNull();
   const h = new History();
   h.exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
   expect(ofType(doc, 'buffer')).toHaveLength(2);
   expect(doc.layout.pieces.length).toBeGreaterThan(2);
   expect(doc.graph.open).toEqual([]);
@@ -78,6 +79,7 @@ test('from an open end: continues it, no buffer at the start', () => {
   expect(start.attachedTo).toMatchObject({ pieceId: 'a', index: 1 });
   expect(start.heading).toBeCloseTo(0);
   new History().exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
   expect(ofType(doc, 'buffer')).toHaveLength(1);
   expect(openKeys(doc)).toEqual(['a:0']);
   expect(doc.graph.joins.has('a:1')).toBe(true);
@@ -94,6 +96,7 @@ test('from a buffer stop: the buffer is removed and the new track mates with the
   expect(start.pos.x).toBeCloseTo(0); expect(start.pos.y).toBeCloseTo(0);
   const h = new History();
   h.exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
   expect(doc.piece('b')).toBeUndefined();
   const mate = doc.graph.joins.get('a:1');
   expect(mate).toBeDefined();
@@ -110,6 +113,7 @@ test('ending near an open connector 0.3U off-line joins it exactly', () => {
   expect(outPose(z, 0)).toMatchObject({ x: 6, rot: 180 }); expect(outPose(z, 0).y).toBeCloseTo(0.3);
   const { cmd } = sketch(doc, [{ x: 0, y: 0 }, { x: 5.85, y: 0.1 }]);
   new History().exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
   expect(openKeys(doc)).toEqual(['z:1']);
   expect(doc.graph.joins.has('z:0')).toBe(true);
   expect(doc.graph.nearMisses).toEqual([]);
@@ -122,6 +126,7 @@ test('ending near a buffer stop removes it and joins its track', () => {
   const doc = docOf([z, b]);
   const { cmd } = sketch(doc, [{ x: 0, y: 0 }, { x: 5.6, y: 0 }]);
   new History().exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
   expect(doc.piece('b')).toBeUndefined();
   expect(doc.graph.joins.has('z:1')).toBe(true);
   expect(openKeys(doc)).toEqual(['z:0']);
@@ -135,6 +140,7 @@ test('ending on the middle of a straight creates a merging switch, fully joined'
   expect(cmd).not.toBeNull();
   const h = new History();
   h.exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
   const sw = ofType(doc, 'switch');
   expect(sw).toHaveLength(1);
   expect(sw[0].switch).toEqual({ mode: 'manual', state: 0 });
@@ -181,6 +187,7 @@ test('ending on a curve with no straight nearby ends in a buffer and keeps the s
   const { cmd } = sketch(doc, [{ x: mid.x - 6, y: mid.y }, { x: mid.x - 0.25, y: mid.y }]);
   expect(cmd).not.toBeNull();
   new History().exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
   expect(doc.piece('c')).toEqual(c);
   expect(ofType(doc, 'switch')).toEqual([]);
   expect(ofType(doc, 'buffer')).toHaveLength(2);
@@ -203,6 +210,7 @@ test('crossing a straight inserts a crossover in the one command; undo restores 
   expect(fitter.crossings).toHaveLength(1);
   const h = new History();
   h.exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
   expect(ofType(doc, 'crossover-90')).toHaveLength(1);
   expect(ofType(doc, 'buffer')).toHaveLength(2);
   expect(doc.graph.open).toHaveLength(2); // the vertical run's outer ends
@@ -233,6 +241,7 @@ test('a stroke starting on a straight a running train occupies lifts the train; 
   expect(cmd).not.toBeNull();
   const h = new History();
   h.exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
   const t = doc.train('t1')!;
   expect(t.head).toBeNull();
   expect(t.lifted).not.toBeNull();
@@ -251,6 +260,7 @@ test('a raised straight over level-0 track becomes a bridge piece; elsewhere pla
   const doc = docOf(track);
   const { cmd } = sketch(doc, [{ x: -2, y: 0 }, { x: 8, y: 0 }], 1);
   new History().exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
   const raised = doc.layout.pieces.filter((p) => p.level === 1);
   const bridges = raised.filter((p) => p.type.startsWith('bridge-'));
   expect(bridges.length).toBeGreaterThanOrEqual(1);
@@ -277,10 +287,68 @@ test('release trims the last ghost piece when the stroke never got halfway past 
   const laidLength = (endX: number) => {
     const d = docOf([]);
     finishStroke(d, start, fake(endX), { x: endX, y: 0 }, R)!.do(d);
+    expect(d.graph.overlaps).toEqual([]);
     expect(ofType(d, 'buffer')).toHaveLength(2);
     expect(d.graph.open).toEqual([]);
     return d.layout.pieces.filter((p) => p.type !== 'buffer').reduce((t, p) => t + pieceGeometry(p).routes[0].path.length, 0);
   };
   expect(laidLength(1.4)).toBeCloseTo(1); // never past 1.5: the second straight is dropped
   expect(laidLength(1.6)).toBeCloseTo(2);
+});
+
+test('a stroke carried past a curve ends short of it without overlapping it', () => {
+  const c = piece('c', 'curve-l-45', { x: 6.5, y: 1.5, rot: -90 + 22.5 });
+  const doc = docOf([c]);
+  const mid = curveMid(c);
+  const { fitter, cmd } = sketch(doc, [{ x: mid.x - 6, y: mid.y }, { x: mid.x + 1, y: mid.y }]);
+  expect(fitter.redFrom).not.toBeNull();
+  new History().exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
+  expect(doc.piece('c')).toEqual(c);
+  const laid = doc.layout.pieces.filter((p) => p.type !== 'buffer' && p.id !== 'c');
+  expect(laid.reduce((t, p) => t + pieceGeometry(p).routes[0].path.length, 0)).toBeGreaterThan(3);
+});
+
+test('a stroke stopped red by a curve across it commits no overlap', () => {
+  const c = specToPiece({ type: 'curve-l-45', x: 3, y: -1, rot: 70, level: 0, flipped: false }, 'c');
+  const doc = docOf([c]);
+  const { cmd } = sketch(doc, [{ x: 0, y: 0 }, { x: 7, y: 0 }]);
+  new History().exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
+  expect(doc.piece('c')).toEqual(c);
+});
+
+test('a stroke ending at the back of a lone buffer commits no overlap', () => {
+  // lone buffer: body from x = 5.5 to 6, its connector at x = 6 facing east (away from the stroke)
+  const b = piece('b', 'buffer', { x: 6, y: 0, rot: 180 });
+  const doc = docOf([b]);
+  const { cmd } = sketch(doc, [{ x: 0, y: 0 }, { x: 5.6, y: 0 }]);
+  new History().exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
+  expect(doc.piece('b')).toEqual(b);
+});
+
+test('an empty-start buffer that would overlap track is left out (open start)', () => {
+  // a vertical run just behind the start, beyond the snap radius
+  const track = run('v', 'straight-2', { x: -0.6, y: -2, rot: 90 }, 2);
+  const doc = docOf(track);
+  const { start, cmd } = sketch(doc, [{ x: 0, y: 0 }, { x: 5, y: 0 }]);
+  expect(start.empty).toBe(true);
+  new History().exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
+  expect(doc.graph.open.some((c) => dist(c.pos, { x: 0, y: 0 }) < 1e-6)).toBe(true);
+  expect(ofType(doc, 'buffer')).toHaveLength(1);
+});
+
+test('a diverging start looping back toward its own run commits no overlap', () => {
+  const track = run('s', 'straight-2', { x: 0, y: 0, rot: 0 }, 4);
+  const doc = docOf(track);
+  const start = beginStroke(doc, { x: 3, y: 0 }, 0, R, { x: 1, y: -1 }) as StrokeStart;
+  const fitter = new StrokeFitter(strokeDoc(doc, start), start);
+  const end = { x: 6.2, y: 0.05 };
+  for (const p of polyline([start.pos, { x: 5, y: -2 }, { x: 6.5, y: -1.5 }, end])) fitter.addPoint(p, false);
+  const cmd = finishStroke(doc, start, fitter, end, R);
+  expect(cmd).not.toBeNull();
+  new History().exec(cmd!, doc);
+  expect(doc.graph.overlaps).toEqual([]);
 });

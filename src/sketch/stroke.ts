@@ -11,7 +11,9 @@ import { samplePath, transformPath } from '../geom/path';
 import { Doc } from '../model/doc';
 import type { Piece } from '../model/types';
 import { pieceGeometry } from '../track/catalog';
-import { JOIN_ANGLE_TOL, JOIN_POS_TOL, OVERLAP_CLEARANCE, type WorldConnector, connKey, worldConnectors } from '../track/graph';
+import {
+  JOIN_ANGLE_TOL, JOIN_POS_TOL, type WorldConnector, connKey, routeShape, shapeDist, shapesNear, worldConnectors,
+} from '../track/graph';
 import { batch, deletePieces, placePieces, withLifting } from '../editor/commands';
 import type { Command } from '../editor/history';
 import { type FitterStart, type StrokeFitter, crossId } from './fitter';
@@ -41,49 +43,8 @@ const dot = (a: Vec2, b: Vec2): number => a.x * b.x + a.y * b.y;
 
 // ---- route geometry ----
 
-/** Route centrelines of a piece, sampled every <= 1/16U and <= 5°. */
-function routeLines(p: PieceSpec): Vec2[][] {
-  return pieceGeometry(p).routes.map((r) => {
-    const path = transformPath(r.path, p);
-    const turn = path.segments.reduce((t, g) => t + (g.kind === 'arc' ? Math.abs(g.sweep) : 0), 0);
-    const n = Math.max(1, Math.ceil(path.length * 16), Math.ceil(turn / 5));
-    const pts: Vec2[] = [];
-    for (let i = 0; i <= n; i++) pts.push(samplePath(path, (path.length * i) / n).pos);
-    return pts;
-  });
-}
-
-function distToSeg(p: Vec2, a: Vec2, b: Vec2): number {
-  const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
-  const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
-  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
-}
-
-const cross3 = (o: Vec2, a: Vec2, b: Vec2): number => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-
-function segSegDist(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): number {
-  const d1 = cross3(q1, q2, p1), d2 = cross3(q1, q2, p2), d3 = cross3(p1, p2, q1), d4 = cross3(p1, p2, q2);
-  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return 0;
-  return Math.min(distToSeg(p1, q1, q2), distToSeg(p2, q1, q2), distToSeg(q1, p1, p2), distToSeg(q2, p1, p2));
-}
-
 /** Distance from `pt` to the nearest route of `p`. */
-function routeDist(p: PieceSpec, pt: Vec2): number {
-  let d = Infinity;
-  for (const line of routeLines(p)) for (let i = 0; i + 1 < line.length; i++) d = Math.min(d, distToSeg(pt, line[i], line[i + 1]));
-  return d;
-}
-
-/** True when any route of `a` comes within OVERLAP_CLEARANCE of any route of `b`. */
-function routesNear(a: PieceSpec, b: PieceSpec): boolean {
-  const la = routeLines(a), lb = routeLines(b);
-  for (const x of la) for (const y of lb) {
-    for (let i = 0; i + 1 < x.length; i++) for (let j = 0; j + 1 < y.length; j++) {
-      if (segSegDist(x[i], x[i + 1], y[j], y[j + 1]) < OVERLAP_CLEARANCE) return true;
-    }
-  }
-  return false;
-}
+const routeDist = (p: PieceSpec, pt: Vec2): number => shapeDist(routeShape(p), pt);
 
 /** Nearest by distance, preferring entries at `level`. */
 function pickNearest<T extends { d: number; level: number }>(xs: T[], level: number): T | null {
@@ -190,8 +151,9 @@ function pastHalf(spec: PieceSpec, points: Vec2[], endPt: Vec2): boolean {
  * 3. The end: an open connector or buffer stop within `snapRadius` at the lead level is joined with
  *    `solveJoin` (reworking up to two trailing unfrozen pieces; a joined buffer is removed); else a
  *    merging switch on plain straight track, joined to its branch; else (or when no join is found)
- *    a buffer stop at the lead.
- * 4. An empty start gets a buffer stop facing outward. 5. Straights are merged. 6. Raised
+ *    a buffer stop at the lead. A lead buffer that would overlap track drops unfrozen trailing
+ *    pieces until it fits; if none fits down to `frozen`, the end is left open.
+ * 4. An empty start gets a buffer stop facing outward, unless it would overlap track (open start). 5. Straights are merged. 6. Raised
  *    `straight-1`/`straight-2` passing over lower track become `bridge-1`/`bridge-2`.
  * 7. One `withLifting` command: start, crossing and end splices, removed buffers, new pieces.
  */
@@ -280,16 +242,42 @@ export function finishStroke(doc: Doc, start: StrokeStart, fitter: StrokeFitter,
       }
     }
   }
-  if (ghost.length === 0) return null;
-  if (!ended) extra.push(attachSpec('buffer', false, undefined, lead, level));
+  /** True when `buf` overlaps no same-level track: the world, the ghost and the buffers so far. */
+  const fits = (buf: PieceSpec): boolean => {
+    const probe = '\u0000buffer';
+    const d = new Doc({
+      ...doc.layout,
+      pieces: [
+        ...world.values(),
+        ...[...ghost, ...extra].map((s, i) => specToPiece(s, '\u0000ghost:' + i)),
+        specToPiece(buf, probe),
+      ],
+    });
+    return !d.graph.overlaps.some(([a, b]) => a === probe || b === probe);
+  };
 
-  // 4. Buffer at an empty start, mating the first piece's connector at the start point.
+  // The end buffer at the lead; where it would overlap track (a red stroke stops just short of it),
+  // drop unfrozen trailing pieces until it fits. If none fits down to `frozen`, the end stays open.
+  if (!ended) {
+    for (;;) {
+      const buf = attachSpec('buffer', false, undefined, lead, level);
+      if (fits(buf)) { extra.push(buf); break; }
+      if (ghost.length <= frozen) break;
+      lead = fitter.anchors[ghost.length - 1];
+      ghost.pop();
+    }
+  }
+  if (ghost.length === 0) return null;
+
+  // 4. Buffer at an empty start, mating the first piece's connector at the start point; left out
+  // (an open start) where it would overlap track.
   if (start.empty) {
     for (const s of ghost) {
       const i = pieceGeometry(s).connectors.findIndex((_, k) => dist(outPose(s, k), start.pos) < JOIN_POS_TOL);
       if (i < 0) continue;
       const c = pieceGeometry(s).connectors[i];
-      extra.push(attachSpec('buffer', false, undefined, outPose(s, i), s.level + c.levelOffset));
+      const buf = attachSpec('buffer', false, undefined, outPose(s, i), s.level + c.levelOffset);
+      if (fits(buf)) extra.push(buf);
       break;
     }
   }
@@ -303,7 +291,7 @@ export function finishStroke(doc: Doc, start: StrokeStart, fitter: StrokeFitter,
     const ends = [outPose(s, 0), outPose(s, 1)];
     const over = lower.some((o) => o !== s && o.level < s.level
       && !pieceGeometry(o).connectors.some((_, k) => ends.some((e) => dist(outPose(o, k), e) < JOIN_POS_TOL))
-      && routesNear(s, o));
+      && shapesNear(routeShape(s), routeShape(o)));
     return over ? { ...s, type: bridge } : s;
   });
 
