@@ -9,6 +9,7 @@ import { render, FLASH_MS, type Overlay } from '../render/renderer';
 import { worldFootprint } from '../track/graph';
 import { getPieceDef } from '../track/catalog';
 import { Input } from './input';
+import { Clicker } from './sound';
 import { buildToolbar } from './toolbar';
 import { buildPalette } from './palette';
 import { framePanels, hidePanels, positionPanels, showSwitchPanel, showTrainPanel } from './panels';
@@ -40,6 +41,8 @@ export class App {
   box: { a: Vec2; b: Vec2 } | null = null;
   /** World centre of a near-miss ring flashing red (it could not be closed); cleared after FLASH_MS. */
   flashRing: Vec2 | undefined;
+  /** Click sounds for sketching (spec §5.9); its AudioContext is unlocked by a pointer-down. */
+  clicker = new Clicker();
 
   private ctx: CanvasRenderingContext2D | null;
   private listeners: Array<() => void> = [];
@@ -69,6 +72,11 @@ export class App {
     root.replaceChildren(shell);
 
     this.ctx = this.canvas.getContext('2d');
+    // Browsers only allow audio after a user gesture: create / resume it on pointer-down (capture,
+    // so it runs before Input handles the press).
+    const unlock = (): void => this.clicker.unlock();
+    this.canvas.addEventListener('pointerdown', unlock, { capture: true });
+    this.disposers.push(() => this.canvas.removeEventListener('pointerdown', unlock, { capture: true }));
     this.input = new Input(this, this.canvas);
     buildToolbar(this, toolbar);
     buildPalette(this, palette);

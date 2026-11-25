@@ -14,11 +14,13 @@ import { flexResize, resizeFlex, type FlexResult } from '../sketch/flexResize';
 import { screenToWorld, zoomAt } from '../render/camera';
 import { liftedCarPoses } from '../render/renderer';
 import type { App } from './app';
+import { SketchController } from './sketchInput';
 
 export type Mode =
   | { kind: 'select' }
   | { kind: 'place'; type: string; flipped: boolean; attachIndex: number; freeRot: number; prefer?: WorldConnector }
-  | { kind: 'placeTrain'; cars: number; dir: 1 | -1 };
+  | { kind: 'placeTrain'; cars: number; dir: 1 | -1 }
+  | { kind: 'sketch' };
 
 /** Connector snap radius in CSS pixels (divided by zoom to get world units). */
 export const SNAP_PX = 12;
@@ -37,7 +39,8 @@ type Drag =
   | { kind: 'press'; start: Vec2; hit: string | null; shift: boolean; ring: [WorldConnector, WorldConnector] | null }
   | { kind: 'move'; ids: string[]; start: Vec2; pivot: Vec2; poses: Map<string, Pose> }
   | { kind: 'box'; start: Vec2; shift: boolean }
-  | { kind: 'resize'; id: string; end: 0 | 1; next: FlexResult | null };
+  | { kind: 'resize'; id: string; end: 0 | 1; next: FlexResult | null }
+  | { kind: 'sketch' };
 
 const isTextTarget = (t: EventTarget | null): boolean =>
   t instanceof Element && (t.matches('input, select, textarea') || (t as HTMLElement).isContentEditable);
@@ -101,8 +104,11 @@ export class Input {
   /** After a keep-placing click, the ghost stays on `prefer` until the pointer moves away from here. */
   private stickAt: Vec2 | null = null;
   private disposers: Array<() => void> = [];
+  /** The sketch tool; pointer and keys go to it while the mode is `sketch`. */
+  readonly sketch: SketchController;
 
   constructor(private app: App, private canvas: HTMLCanvasElement) {
+    this.sketch = new SketchController(app);
     const on = (t: EventTarget, type: string, fn: (e: never) => void, opts?: AddEventListenerOptions): void => {
       t.addEventListener(type, fn as EventListener, opts);
       this.disposers.push(() => t.removeEventListener(type, fn as EventListener, opts));
@@ -123,7 +129,9 @@ export class Input {
   set mode(m: Mode) { this.setMode(m); }
 
   setMode(m: Mode): void {
+    if (this._mode.kind === 'sketch') this.sketch.cancel();
     this._mode = m;
+    this.canvas.classList.toggle('tl-sketch', m.kind === 'sketch');
     this.stickAt = null;
     if (this.drag?.kind !== 'pan') this.drag = null;
     this.app.preview = null;
@@ -194,6 +202,9 @@ export class Input {
         app.overlay.ghostTrain = carPoses(app.doc, t);
         app.overlay.ghostTrainValid = canPlaceTrain(app.doc, head, cars);
       }
+    } else if (m.kind === 'sketch') {
+      const s = this.sketch.overlay();
+      if (s) app.overlay.sketch = s;
     }
     app.requestRender();
   }
@@ -357,7 +368,10 @@ export class Input {
     const lower = k.toLowerCase();
     const m = this._mode;
 
+    if (m.kind === 'sketch' && !e.ctrlKey && !e.metaKey && this.sketch.key(e)) { e.preventDefault(); return; }
     if (e.ctrlKey || e.metaKey) {
+      // Undo / redo mid-stroke: the stroke was fitted against the old layout, so drop it.
+      if (m.kind === 'sketch' && (lower === 'z' || lower === 'y')) this.sketch.cancel();
       if (lower === 'z') { e.preventDefault(); if (e.shiftKey) this.app.redo(); else this.app.undo(); this.refresh(); }
       else if (lower === 'y') { e.preventDefault(); this.app.redo(); this.refresh(); }
       return;
@@ -388,7 +402,9 @@ export class Input {
         if (m.kind === 'select') { e.preventDefault(); this.deleteSelection(); }
         return;
     }
-    if (lower === 'r' && m.kind === 'place') {
+    if (lower === 's' && !e.altKey) {
+      if (m.kind !== 'sketch') this.setMode({ kind: 'sketch' });
+    } else if (lower === 'r' && m.kind === 'place') {
       this._mode = getPieceDef(m.type).flippable
         ? { ...m, flipped: !m.flipped }
         : { ...m, freeRot: normDeg(m.freeRot + ROT_STEP) };
@@ -422,7 +438,7 @@ export class Input {
         return;
       case 'dblclick': this.onDoubleClick(at); return;
       case 'pointerdown': this.onDown(e as PointerEvent, at); return;
-      case 'pointermove': this.onMove(at); return;
+      case 'pointermove': this.onMove(at, e.shiftKey); return;
       case 'pointerup': case 'pointercancel': this.onUp(e as PointerEvent, at); return;
     }
   }
@@ -444,6 +460,7 @@ export class Input {
     if (e.button !== 0) return;
     if (m.kind === 'place') { this.placeAt(m, at); return; }
     if (m.kind === 'placeTrain') { this.placeTrainAt(m, at); return; }
+    if (m.kind === 'sketch') { this.drag = { kind: 'sketch' }; this.sketch.down(this.toWorld(at)); return; }
 
     const w = this.toWorld(at);
     const handle = this.handleAt(w);
@@ -461,11 +478,12 @@ export class Input {
     this.drag = { kind: 'press', start: at, hit: this.pieceAt(w), shift: e.shiftKey, ring };
   }
 
-  private onMove(at: Vec2): void {
+  private onMove(at: Vec2, shift = false): void {
     this.cursor = at;
     if (this.stickAt && dist(at, this.stickAt) > DRAG_PX) this.stickAt = null;
     const d = this.drag, app = this.app;
     if (!d) { this.refresh(); return; }
+    if (d.kind === 'sketch') { this.sketch.move(this.toWorld(at), shift); return; }
     if (d.kind === 'pan') {
       const z = app.camera.zoom;
       app.camera = { ...app.camera, cx: app.camera.cx - (at.x - d.last.x) / z, cy: app.camera.cy - (at.y - d.last.y) / z };
@@ -515,6 +533,10 @@ export class Input {
     const d = this.drag, app = this.app;
     this.drag = null;
     if (!d || d.kind === 'pan') return;
+    if (d.kind === 'sketch') {
+      if (e.type === 'pointercancel') this.sketch.cancel(); else this.sketch.up(this.toWorld(at));
+      return;
+    }
     if (e.type === 'pointercancel') { app.preview = null; app.box = null; app.requestRender(); return; }
     if (d.kind === 'resize') {
       app.preview = null;

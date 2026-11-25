@@ -195,3 +195,23 @@ test('a flashing near-miss ring is stroked red at its centre', () => {
   expect(rings({ flashRing: { x: 2, y: 3 } })).toEqual([[2, 3]]);
   expect(rings({})).toEqual([]);
 });
+
+test('sketch overlay: stroke (red from redFrom), 50% ghost, ramp badge, switch outline, refused ✕', () => {
+  const { ctx, calls } = mockContext();
+  const points = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }];
+  const ov = overlay({
+    sketch: {
+      points, ghost: [P('g0', 'straight-1', 0, 0), P('g1', 'ramp-2', 1, 0)], level: 0, redFrom: 2, pendingRamp: 1,
+      lead: { x: 1, y: 0 }, refusedAt: { x: 5, y: 5 },
+      switchPreview: [P('sw', 'switch', 0, 2, { switch: { mode: 'manual', state: 0 } })],
+    },
+  });
+  render(ctx, new Doc(emptyLayout()), defaultCamera(), size, ov, 'wooden');
+  const strokes = calls.filter((c) => c.name === 'stroke');
+  expect(strokes.some((c) => c.strokeStyle === 'rgba(30,136,229,0.55)')).toBe(true);
+  expect(strokes.some((c) => c.strokeStyle === 'rgba(229,57,53,0.8)')).toBe(true);
+  expect(calls.some((c) => c.globalAlpha === 0.5 && (c.name === 'fill' || c.name === 'stroke'))).toBe(true);
+  expect(calls.find((c) => c.name === 'fillText')?.args[0]).toBe('↑');
+  expect(calls.some((c) => c.name === 'setLineDash')).toBe(true);
+  expect(strokes.some((c) => c.strokeStyle === '#e53935')).toBe(true);
+});

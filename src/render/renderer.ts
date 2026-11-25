@@ -19,6 +19,26 @@ export interface Overlay {
   showConnectors: boolean;
   /** A near-miss ring that could not be closed, flashed red (the app clears it after FLASH_MS). */
   flashRing?: Vec2;
+  /** Sketch mode (spec §5.3, §5.11): the stroke being drawn and its live ghost. */
+  sketch?: SketchOverlay;
+}
+
+export interface SketchOverlay {
+  /** The raw stroke, in world units. */
+  points: Vec2[];
+  /** Ghost pieces (drawn at 50% alpha in the current style). */
+  ghost: Piece[];
+  /** Level of the ghost's leading end. */
+  level: number;
+  /** Index of the first stroke point drawn red, or null. */
+  redFrom: number | null;
+  pendingRamp: -1 | 0 | 1;
+  /** The ghost's leading end, marked with a dot (and the pending ramp's badge). */
+  lead?: Vec2;
+  /** Where a stroke start was refused: a red ✕. */
+  refusedAt?: Vec2;
+  /** Switches the stroke will create, drawn as outlines. */
+  switchPreview?: Piece[];
 }
 
 /** How long a near-miss ring that could not be closed flashes red. */
@@ -37,6 +57,10 @@ const OVERLAP = 'rgba(229,57,53,0.35)';
 const SELECT = '#1e88e5';
 const CRASH = '#e53935';
 const INVALID = 'rgba(229,57,53,0.6)';
+const STROKE = 'rgba(30,136,229,0.55)';
+const STROKE_RED = 'rgba(229,57,53,0.8)';
+const LEAD = '#1e88e5';
+const REFUSED = '#e53935';
 const GHOST_TRAIN: Train = {
   id: 'ghost', cars: 0, color: '#808080', speed: 0, running: false, head: null, lifted: null,
   currentSpeed: 0, crashed: false, crashAt: null,
@@ -288,7 +312,89 @@ export function render(
       ctx.restore();
     }
   }
+  if (overlay.sketch) drawSketch(ctx, style, overlay.sketch, px);
   ctx.restore();
 
   ctx.restore();
+}
+
+function strokeLine(ctx: CanvasRenderingContext2D, pts: Vec2[]): void {
+  if (pts.length < 2) return;
+  ctx.beginPath();
+  pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+  ctx.stroke();
+}
+
+/**
+ * Sketch overlay, in order: the stroke (red from `redFrom`), the ghost at 50% alpha, the lead dot
+ * with a ↑ / ↓ badge for a pending ramp, switch outlines, and a red ✕ where a start was refused.
+ */
+function drawSketch(ctx: CanvasRenderingContext2D, style: Style, s: SketchOverlay, px: number): void {
+  ctx.save();
+  ctx.lineWidth = 2 * px;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const red = s.redFrom === null ? s.points.length : Math.max(0, Math.min(s.points.length, s.redFrom));
+  ctx.strokeStyle = STROKE;
+  strokeLine(ctx, s.points.slice(0, red + 1));
+  ctx.strokeStyle = STROKE_RED;
+  strokeLine(ctx, s.points.slice(Math.max(0, red - 1)));
+  ctx.restore();
+
+  for (const p of [...s.ghost].sort((a, b) => a.level - b.level)) {
+    ctx.save();
+    ctx.globalAlpha = GHOST_ALPHA;
+    style.piece(ctx, p, { ghost: true });
+    ctx.restore();
+  }
+
+  if (s.lead) {
+    ctx.save();
+    ctx.fillStyle = LEAD;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5 * px;
+    ctx.beginPath();
+    ctx.arc(s.lead.x, s.lead.y, 4 * px, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    if (s.pendingRamp !== 0) {
+      const bx = s.lead.x + 12 * px, by = s.lead.y - 12 * px;
+      ctx.beginPath();
+      ctx.arc(bx, by, 8 * px, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `bold ${12 * px}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(s.pendingRamp > 0 ? '↑' : '↓', bx, by + 0.5 * px);
+    }
+    ctx.restore();
+  }
+
+  if (s.switchPreview?.length) {
+    ctx.save();
+    ctx.strokeStyle = LEAD;
+    ctx.lineWidth = 2 * px;
+    ctx.setLineDash([5 * px, 3 * px]);
+    for (const p of s.switchPreview) {
+      ctx.beginPath();
+      tracePolys(ctx, worldFootprint(p));
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  if (s.refusedAt) {
+    const { x, y } = s.refusedAt, r = 7 * px;
+    ctx.save();
+    ctx.strokeStyle = REFUSED;
+    ctx.lineWidth = 3 * px;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r);
+    ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r);
+    ctx.stroke();
+    ctx.restore();
+  }
 }

@@ -63,12 +63,16 @@ export function buildToolbar(app: App, el: HTMLElement): void {
   }, 'Show or hide the grid');
   const fit = button('Fit', 'fit', () => app.fit(), 'Fit the layout in view');
   const play = button('', 'play', () => app.togglePlay());
+  const sketch = button('Sketch', 'sketch', () => {
+    app.input.setMode(app.input.mode.kind === 'sketch' ? { kind: 'select' } : { kind: 'sketch' });
+  }, 'Sketch track by drawing (S)');
+  const sound = button('Sound', 'sound', () => { app.clicker.setEnabled(!app.clicker.enabled); app.notify(); }, 'Sketch click sounds on or off');
 
   el.append(
     button('New', 'new', () => app.newLayout()),
     button('Open', 'open', () => file.click()),
     button('Save', 'save', () => app.save()),
-    file, sep(), undo, redo, sep(), style, level, sep(), collide.wrap, hills.wrap, sep(), grid, fit, sep(), play,
+    file, sep(), undo, redo, sep(), sketch, sep(), style, level, sep(), collide.wrap, hills.wrap, sep(), grid, fit, sound, sep(), play,
   );
 
   const update = (): void => {
@@ -79,6 +83,8 @@ export function buildToolbar(app: App, el: HTMLElement): void {
     collide.box.checked = app.doc.layout.settings.collisions;
     hills.box.checked = app.doc.layout.settings.hillEffect;
     grid.setAttribute('aria-pressed', String(app.doc.layout.settings.gridVisible));
+    sketch.setAttribute('aria-pressed', String(app.input.mode.kind === 'sketch'));
+    sound.setAttribute('aria-pressed', String(app.clicker.enabled));
     play.textContent = app.sim.paused ? '▶ Play' : '⏸ Pause';
   };
   app.onChange(update);

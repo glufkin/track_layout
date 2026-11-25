@@ -57,7 +57,7 @@ export class Clicker {
   unlock(): void {
     try {
       if (!this.ctx) this.ctx = this.ctxFactory();
-      if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume();
+      if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume().catch(() => {});
     } catch {
       this.ctx = null;
     }
