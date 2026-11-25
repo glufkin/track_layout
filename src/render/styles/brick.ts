@@ -1,7 +1,7 @@
 import type { Vec2 } from '../../geom/vec';
 import { fromAngle } from '../../geom/vec';
 import { samplePath, type RoutePath } from '../../geom/path';
-import { getPieceDef } from '../../track/catalog';
+import { getPieceDef, pieceGeometry } from '../../track/catalog';
 import { worldConnectors, worldFootprint, worldRoutePath } from '../../track/graph';
 import { CAR_WIDTH, type CarPose } from '../../sim/motion';
 import type { Piece, Train } from '../../model/types';
@@ -30,7 +30,7 @@ const STUD_R = 0.07;
 export const STUD_MIN_ZOOM = 30;
 const RAD = Math.PI / 180;
 
-const routePaths = (p: Piece): RoutePath[] => getPieceDef(p.type).routes.map((_, i) => worldRoutePath(p, i));
+const routePaths = (p: Piece): RoutePath[] => pieceGeometry(p).routes.map((_, i) => worldRoutePath(p, i));
 
 /** Add stud circles (one subpath each) at the given points to the current path. */
 function studAt(ctx: CanvasRenderingContext2D, x: number, y: number, r: number): void {

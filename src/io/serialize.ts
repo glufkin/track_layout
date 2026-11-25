@@ -1,14 +1,16 @@
 import { emptyLayout, MAX_CARS, MAX_LEVEL, type Layout, type Piece, type StyleId, type Train } from '../model/types';
-import { CATALOG, getPieceDef } from '../track/catalog';
+import { CATALOG, getPieceDef, pieceGeometry, validFlex, type FlexParams } from '../track/catalog';
 
 export const FORMAT = 'track-layout';
-export const VERSION = 1;
+export const VERSION = 2;
 export const AUTOSAVE_KEY = 'track-layout:autosave';
 /** Where an autosave that failed to load is kept, so a bad load never silently loses it. */
 export const AUTOSAVE_REJECTED_KEY = 'track-layout:autosave-rejected';
 
 const STYLES: StyleId[] = ['wooden', 'model', 'brick'];
 const r6 = (n: number): number => Math.round(n * 1e6) / 1e6;
+const writeFlex = (f: FlexParams): FlexParams =>
+  ('length' in f ? { length: r6(f.length) } : { radius: r6(f.radius), sweep: r6(f.sweep) });
 
 export function serialize(layout: Layout): string {
   const data = {
@@ -19,6 +21,7 @@ export function serialize(layout: Layout): string {
     pieces: layout.pieces.map((p) => ({
       id: p.id, type: p.type, x: r6(p.x), y: r6(p.y), rotation: r6(p.rot), level: p.level, flipped: p.flipped,
       ...(p.switch ? { switch: { mode: p.switch.mode, state: p.switch.state } } : {}),
+      ...(p.flex ? { flex: writeFlex(p.flex) } : {}),
     })),
     trains: layout.trains.map((t) => ({
       id: t.id, cars: t.cars, color: t.color, speed: r6(t.speed), running: t.running,
@@ -71,6 +74,16 @@ function readPiece(raw: unknown, n: number): Piece {
   } else if (hasSwitch) {
     piece.switch = { mode: 'manual', state: 0 };
   }
+  const flexKind = getPieceDef(type).flex;
+  if (flexKind) {
+    if (!validFlex(type, raw.flex as FlexParams | undefined)) {
+      fail(`${where}: ${type} needs a flex field with valid ${flexKind === 'straight' ? 'length' : 'radius and sweep'}`);
+    }
+    const f = raw.flex as Record<string, number>;
+    piece.flex = flexKind === 'straight' ? { length: f.length } : { radius: f.radius, sweep: f.sweep };
+  } else if (raw.flex !== undefined) {
+    fail(`${where}: flex field on a piece that is not a flex type`);
+  }
   return piece;
 }
 
@@ -93,7 +106,7 @@ function readTrain(raw: unknown, n: number, pieces: Map<string, Piece>): Train {
     const p = typeof h.piece === 'string' ? pieces.get(h.piece) : undefined;
     if (!p) return fail(`${where}: head points at missing piece ${JSON.stringify(h.piece)}`);
     const route = h.route;
-    if (typeof route !== 'number' || !Number.isInteger(route) || route < 0 || route >= getPieceDef(p.type).routes.length) {
+    if (typeof route !== 'number' || !Number.isInteger(route) || route < 0 || route >= pieceGeometry(p).routes.length) {
       fail(`${where}: head points at missing route ${JSON.stringify(route)}`);
     }
     if (h.direction !== 'forward' && h.direction !== 'backward') fail(`${where}: bad head direction`);

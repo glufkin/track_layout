@@ -1,5 +1,5 @@
 import { type Vec2, type Pose, applyPose, dist, normDeg, rotate, add, sub } from '../geom/vec';
-import { pieceConnectors } from '../track/catalog';
+import { pieceGeometry } from '../track/catalog';
 import { type WorldConnector, connKey, worldConnectors } from '../track/graph';
 import { MAX_LEVEL } from '../model/types';
 import type { Doc } from '../model/doc';
@@ -22,7 +22,7 @@ export interface GhostResult {
 const snapTo = (v: number, step: number): number => Math.round(v / step) * step + 0;
 
 export function computeGhost(doc: Doc, req: GhostRequest): GhostResult {
-  const conns = pieceConnectors(req.type, req.flipped);
+  const conns = pieceGeometry(req).connectors;
   const n = conns.length;
   const attachIndex = ((req.attachIndex % n) + n) % n;
   if (req.alt) {

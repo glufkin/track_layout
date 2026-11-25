@@ -1,6 +1,6 @@
 import { type Vec2, applyPose, dist, angleDiff, normDeg } from '../geom/vec';
 import { type RoutePath, transformPath, samplePath } from '../geom/path';
-import { pieceConnectors, pieceRoutes, pieceFootprint } from './catalog';
+import { pieceGeometry } from './catalog';
 import type { Piece } from '../model/types';
 
 export interface WorldConnector { pieceId: string; index: number; pos: Vec2; heading: number; level: number }
@@ -22,7 +22,7 @@ const EPS = 1e-9;
 export const connKey = (pieceId: string, index: number): string => pieceId + ':' + index;
 
 export function worldConnectors(p: Piece): WorldConnector[] {
-  return pieceConnectors(p.type, p.flipped).map((c, index) => ({
+  return pieceGeometry(p).connectors.map((c, index) => ({
     pieceId: p.id, index,
     pos: applyPose(p, c.pos),
     heading: normDeg(c.heading + p.rot),
@@ -31,12 +31,12 @@ export function worldConnectors(p: Piece): WorldConnector[] {
 }
 
 export function worldRoutePath(p: Piece, route: number): RoutePath {
-  return transformPath(pieceRoutes(p.type, p.flipped)[route].path, p);
+  return transformPath(pieceGeometry(p).routes[route].path, p);
 }
 
 /** One band polygon per route, in world coordinates. */
 export function worldFootprint(p: Piece): Vec2[][] {
-  return pieceFootprint(p.type, p.flipped).map((poly) => poly.map((v) => applyPose(p, v)));
+  return pieceGeometry(p).footprint.map((poly) => poly.map((v) => applyPose(p, v)));
 }
 
 const cellKey = (cx: number, cy: number): string => cx + ',' + cy;
@@ -99,7 +99,7 @@ interface Shape { lines: Vec2[][]; box: [number, number, number, number] }
 function makeShape(p: Piece): Shape {
   const lines: Vec2[][] = [];
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (let r = 0; r < pieceRoutes(p.type, p.flipped).length; r++) {
+  for (let r = 0; r < pieceGeometry(p).routes.length; r++) {
     const path = worldRoutePath(p, r);
     const turn = path.segments.reduce((t, s) => t + (s.kind === 'arc' ? Math.abs(s.sweep) : 0), 0);
     const n = Math.max(1, Math.ceil(path.length / MAX_STEP_U), Math.ceil(turn / MAX_STEP_DEG));

@@ -1,4 +1,4 @@
-import { getPieceDef, pieceConnectors, pieceRoutes } from '../track/catalog';
+import { getPieceDef, pieceGeometry } from '../track/catalog';
 import type { Doc } from '../model/doc';
 import type { Train, TrackPos } from '../model/types';
 import { advance, distanceAhead, occupiedPieces, reverseHead, routeEntering } from './motion';
@@ -94,9 +94,9 @@ export class Simulation {
     if (!this.doc.layout.settings.hillEffect) return 1;
     const p = this.doc.piece(head.pieceId);
     if (!p || !getPieceDef(p.type).ramp) return 1;
-    const route = pieceRoutes(p.type, p.flipped)[head.route];
+    const { routes, connectors: conns } = pieceGeometry(p);
+    const route = routes[head.route];
     if (!route || route.to === null) return 1;
-    const conns = pieceConnectors(p.type, p.flipped);
     const enter = head.dir === 1 ? route.from : route.to;
     const exit = head.dir === 1 ? route.to : route.from;
     const rise = conns[exit].levelOffset - conns[enter].levelOffset;

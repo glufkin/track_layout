@@ -1,7 +1,7 @@
 import type { Vec2 } from '../../geom/vec';
 import { fromAngle } from '../../geom/vec';
 import { samplePath, type RoutePath } from '../../geom/path';
-import { getPieceDef } from '../../track/catalog';
+import { getPieceDef, pieceGeometry } from '../../track/catalog';
 import { worldConnectors, worldFootprint, worldRoutePath } from '../../track/graph';
 import { CAR_WIDTH, type CarPose } from '../../sim/motion';
 import type { Piece, Train } from '../../model/types';
@@ -28,7 +28,7 @@ const BUFFER = '#8a2c2c';
 const GRID = 0.5;
 const RAD = Math.PI / 180;
 
-const routePaths = (p: Piece): RoutePath[] => getPieceDef(p.type).routes.map((_, i) => worldRoutePath(p, i));
+const routePaths = (p: Piece): RoutePath[] => pieceGeometry(p).routes.map((_, i) => worldRoutePath(p, i));
 
 function background(ctx: CanvasRenderingContext2D, min: Vec2, max: Vec2, gridVisible: boolean): void {
   ctx.save();

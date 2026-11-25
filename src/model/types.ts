@@ -1,4 +1,5 @@
 import type { Pose, Vec2 } from '../geom/vec';
+import type { FlexParams } from '../track/catalog';
 
 export type StyleId = 'wooden' | 'model' | 'brick';
 
@@ -9,6 +10,8 @@ export interface Piece {
   x: number; y: number; rot: number;
   level: number; flipped: boolean;
   switch?: SwitchSettings;
+  /** Required on the flex types (`flex-straight`, `flex-curve`), absent on all others. */
+  flex?: FlexParams;
 }
 
 /** `dist` is measured from the route's `from` connector; `dir: 1` travels from -> to. */

@@ -2,7 +2,7 @@ import { type Pose, type Vec2, dist, normDeg, rotate, sub } from '../geom/vec';
 import { samplePath } from '../geom/path';
 import { Doc } from '../model/doc';
 import type { Piece, TrackPos, Train } from '../model/types';
-import { getPieceDef, pieceConnectors } from '../track/catalog';
+import { getPieceDef, pieceGeometry } from '../track/catalog';
 import { type WorldConnector, connKey, worldFootprint, worldRoutePath } from '../track/graph';
 import { computeGhost, posesAfterGroup, snapGroup, ROT_STEP, type GhostResult } from '../editor/snapping';
 import {
@@ -58,7 +58,7 @@ function inCar(pt: Vec2, c: CarPose): boolean {
 export function nearestTrackPos(doc: Doc, pt: Vec2, maxDist: number, dir: 1 | -1): TrackPos | null {
   let best: { pos: TrackPos; d: number; level: number } | null = null;
   for (const p of doc.layout.pieces) {
-    const routes = getPieceDef(p.type).routes;
+    const routes = pieceGeometry(p).routes;
     for (let r = 0; r < routes.length; r++) {
       const path = worldRoutePath(p, r);
       const n = Math.max(1, Math.ceil(path.length / ROUTE_SAMPLE));
@@ -209,7 +209,7 @@ export class Input {
     while (queue.length) {
       const p = doc.piece(queue.shift()!);
       if (!p) continue;
-      const n = pieceConnectors(p.type, p.flipped).length;
+      const n = pieceGeometry(p).connectors.length;
       for (let i = 0; i < n; i++) {
         const other = doc.graph.joins.get(connKey(p.id, i))?.pieceId;
         if (other && !seen.has(other)) { seen.add(other); queue.push(other); }
@@ -329,7 +329,7 @@ export class Input {
         if (m.kind !== 'place' && m.kind !== 'placeTrain') return; // keep keyboard navigation
         e.preventDefault();
         if (m.kind === 'place') {
-          const n = pieceConnectors(m.type, m.flipped).length;
+          const n = pieceGeometry(m).connectors.length;
           this._mode = { ...m, attachIndex: (m.attachIndex + 1) % n };
           this.refresh();
         } else if (m.kind === 'placeTrain') {

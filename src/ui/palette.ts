@@ -6,7 +6,7 @@ import type { App } from './app';
 
 const FAMILY_LABEL: Record<Family, string> = {
   straight: 'Straight', curve: 'Curves', switch: 'Switches', crossover: 'Crossings',
-  ramp: 'Ramps', bridge: 'Bridges', tunnel: 'Tunnels', buffer: 'Buffers',
+  ramp: 'Ramps', bridge: 'Bridges', tunnel: 'Tunnels', buffer: 'Buffers', flex: 'Flex',
 };
 const THUMB_W = 72, THUMB_H = 48, THUMB_PAD = 6;
 /** Max thumbnail scale (px per U), so short pieces are not blown up to fill the tile. */

@@ -1,6 +1,6 @@
 import { type Pose, type Vec2, fromAngle } from '../geom/vec';
 import { samplePath } from '../geom/path';
-import { getPieceDef, pieceConnectors, pieceRoutes } from '../track/catalog';
+import { getPieceDef, pieceGeometry } from '../track/catalog';
 import { worldFootprint, worldRoutePath } from '../track/graph';
 import { carPoses, CAR_LEN, CAR_WIDTH, COUPLING, LOCO_LEN, type CarPose } from '../sim/motion';
 import type { Doc } from '../model/doc';
@@ -66,7 +66,7 @@ function switchArrow(ctx: CanvasRenderingContext2D, p: Piece): void {
   if (!sw) return;
   const route = sw.routes[p.switch?.state ?? 0];
   const path = worldRoutePath(p, route);
-  const forward = pieceRoutes(p.type, p.flipped)[route].from === sw.entry;
+  const forward = pieceGeometry(p).routes[route].from === sw.entry;
   const [d0, d1] = forward ? [0.2 * path.length, 0.72 * path.length] : [0.8 * path.length, 0.28 * path.length];
   ctx.save();
   ctx.strokeStyle = SWITCH_ARROW;
@@ -203,7 +203,7 @@ export function render(
     for (const c of doc.graph.open) {
       const p = doc.piece(c.pieceId);
       if (!p) continue;
-      const g = pieceConnectors(p.type, p.flipped)[c.index].gender;
+      const g = pieceGeometry(p).connectors[c.index].gender;
       connectorShape(ctx, c, g);
       ctx.fill();
       const m = pegCentre(c, g);

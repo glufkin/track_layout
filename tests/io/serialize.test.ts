@@ -28,7 +28,7 @@ const goodTrain = { id: 't1', cars: 1, color: 'red', speed: 1, running: false, h
 
 describe('serialize', () => {
   test('constants', () => {
-    expect([FORMAT, VERSION, AUTOSAVE_KEY]).toEqual(['track-layout', 1, 'track-layout:autosave']);
+    expect([FORMAT, VERSION, AUTOSAVE_KEY]).toEqual(['track-layout', 2, 'track-layout:autosave']);
   });
 
   test('round trip preserves pieces, trains, settings, style', () => {
@@ -47,6 +47,45 @@ describe('serialize', () => {
     const r = deserialize(serialize(l));
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.layout).toEqual(l);
+  });
+
+  test('v2 round trip keeps flex params', () => {
+    const l = emptyLayout();
+    l.pieces.push(
+      piece('f1', 'flex-straight', { flex: { length: 1.3 } }),
+      piece('f2', 'flex-curve', { flipped: true, flex: { radius: 2.5, sweep: 30 } }),
+    );
+    const s = serialize(l);
+    expect(JSON.parse(s).version).toBe(2);
+    const r = deserialize(s);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.layout).toEqual(l);
+  });
+
+  test('flex params are rounded to 6 decimals; non-flex pieces get no flex field', () => {
+    const l = emptyLayout();
+    l.pieces.push(piece('f1', 'flex-curve', { flex: { radius: 2 / 3, sweep: 10 / 3 } }), piece('p1'));
+    const out = JSON.parse(serialize(l)).pieces;
+    expect(out[0].flex).toEqual({ radius: 0.666667, sweep: 3.333333 });
+    expect('flex' in out[1]).toBe(false);
+  });
+
+  test('v1 file still loads', () => {
+    const r = deserialize(file({ version: 1, pieces: [goodPiece] }));
+    if (!r.ok) throw new Error(r.error);
+    expect(r.layout.pieces[0].flex).toBeUndefined();
+  });
+
+  test.each([
+    ['flex curve radius 0.3', { ...goodPiece, type: 'flex-curve', flex: { radius: 0.3, sweep: 10 } }],
+    ['flex field on straight-1', { ...goodPiece, flex: { length: 1 } }],
+    ['flex-straight without flex', { ...goodPiece, type: 'flex-straight' }],
+    ['flex-straight with curve params', { ...goodPiece, type: 'flex-straight', flex: { radius: 2, sweep: 10 } }],
+    ['flex not an object', { ...goodPiece, type: 'flex-straight', flex: 1 }],
+  ])('rejects bad flex: %s', (_, p) => {
+    const r = deserialize(file({ version: 2, pieces: [p] }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/flex/);
   });
 
   test('transient fields are not written and reset on load', () => {
@@ -104,7 +143,7 @@ describe('serialize', () => {
   test.each([
     ['{}', /format/],
     ['null', /format/],
-    ['{"format":"track-layout","version":2,"pieces":[],"trains":[]}', /version/],
+    ['{"format":"track-layout","version":3,"pieces":[],"trains":[]}', /version/],
     ['{"format":"track-layout","version":0,"pieces":[],"trains":[]}', /version/],
     ['{"format":"track-layout","version":-3,"pieces":[],"trains":[]}', /version/],
     ['{"format":"track-layout","version":0.5,"pieces":[],"trains":[]}', /version/],

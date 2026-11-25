@@ -1,6 +1,6 @@
 import { type Vec2, normDeg } from '../geom/vec';
 import { samplePath } from '../geom/path';
-import { getPieceDef, pieceRoutes, type RouteDef } from '../track/catalog';
+import { getPieceDef, pieceGeometry, type RouteDef } from '../track/catalog';
 import { connKey, worldRoutePath } from '../track/graph';
 import type { Doc } from '../model/doc';
 import type { Piece, Train, TrackPos } from '../model/types';
@@ -26,7 +26,7 @@ function pieceOf(doc: Doc, id: string): Piece {
 }
 
 const routeOf = (p: Piece, route: number): RouteDef => {
-  const r = pieceRoutes(p.type, p.flipped)[route];
+  const r = pieceGeometry(p).routes[route];
   if (!r) throw new Error('Unknown route ' + route + ' on piece ' + p.id);
   return r;
 };
@@ -37,7 +37,7 @@ const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v
 export function routeEntering(doc: Doc, pieceId: string, connector: number): { route: number; dir: 1 | -1; facing: boolean } {
   const p = pieceOf(doc, pieceId);
   const def = getPieceDef(p.type);
-  const routes = pieceRoutes(p.type, p.flipped);
+  const routes = pieceGeometry(p).routes;
   if (def.switch && connector === def.switch.entry) {
     const route = def.switch.routes[p.switch?.state ?? 0];
     return { route, dir: routes[route].from === connector ? 1 : -1, facing: true };

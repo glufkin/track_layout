@@ -1,6 +1,6 @@
 import { type Vec2, fromAngle } from '../../geom/vec';
 import { samplePath, type RoutePath } from '../../geom/path';
-import { getPieceDef, pieceConnectors } from '../../track/catalog';
+import { getPieceDef, pieceGeometry } from '../../track/catalog';
 import { worldConnectors, worldFootprint, worldRoutePath } from '../../track/graph';
 import { CAR_WIDTH, type CarPose } from '../../sim/motion';
 import type { Piece, Train } from '../../model/types';
@@ -29,7 +29,7 @@ const GRID = 0.5;
 const RAD = Math.PI / 180;
 const rightOf = (h: number): Vec2 => ({ x: -Math.sin(h * RAD), y: Math.cos(h * RAD) });
 
-const routePaths = (p: Piece): RoutePath[] => getPieceDef(p.type).routes.map((_, i) => worldRoutePath(p, i));
+const routePaths = (p: Piece): RoutePath[] => pieceGeometry(p).routes.map((_, i) => worldRoutePath(p, i));
 
 /** A small rectangle `along` × `across` centred at `c`, rotated to heading `h` (added to the path). */
 function orientedRect(ctx: CanvasRenderingContext2D, c: Vec2, h: number, along: number, across: number): void {
@@ -143,7 +143,7 @@ function piece(ctx: CanvasRenderingContext2D, p: Piece, _opts: PieceDrawOpts): v
   }
 
   // Pegs and holes look the same, so a joined pair reads as one seam whichever end is drawn last.
-  const genders = pieceConnectors(p.type, p.flipped);
+  const genders = pieceGeometry(p).connectors;
   ctx.fillStyle = PEG;
   ctx.strokeStyle = PEG_EDGE;
   ctx.lineWidth = 0.015;

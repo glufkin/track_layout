@@ -1,6 +1,6 @@
 import type { Doc } from '../model/doc';
 import type { Piece, Train, TrackPos } from '../model/types';
-import { pieceRoutes } from '../track/catalog';
+import { pieceGeometry } from '../track/catalog';
 import { carPoses, distanceAhead, occupiedPieces, trainLength } from '../sim/motion';
 import { carsOverlap } from '../sim/collision';
 import type { Command } from './history';
@@ -124,7 +124,7 @@ const EPS = 1e-6;
 /** Does the head's piece and route exist, with room behind it for the whole train before a dead end? */
 export function canPlaceTrain(doc: Doc, head: TrackPos, cars: number): boolean {
   const p = doc.piece(head.pieceId);
-  if (!p || !pieceRoutes(p.type, p.flipped)[head.route]) return false;
+  if (!p || !pieceGeometry(p).routes[head.route]) return false;
   const len = trainLength(cars);
   const back: TrackPos = { ...head, dir: head.dir === 1 ? -1 : 1 };
   return distanceAhead(doc, back, len) >= len - EPS;
