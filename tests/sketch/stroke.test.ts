@@ -394,3 +394,31 @@ test('a merging-switch end whose join would run over nearby track commits no ove
   if (cmd) new History().exec(cmd, doc);
   expect(doc.graph.overlaps).toEqual([]);
 });
+
+/** Begin at pts[0], drag through every point (Shift or not) and release at the last one. */
+function sketchPts(doc: Doc, pts: Vec2[], shift: boolean) {
+  const start = beginStroke(doc, pts[0], 0, R);
+  if (start === 'refused') throw new Error('refused');
+  const fitter = new StrokeFitter(strokeDoc(doc, start), start);
+  for (const p of pts.slice(1)) fitter.addPoint(p, shift);
+  return { start, fitter, cmd: finishStroke(doc, start, fitter, pts[pts.length - 1], R) };
+}
+
+test('a loop drawn on an empty table closes on its own start: no open ends, no buffers', () => {
+  const oval: Vec2[] = [];
+  for (let k = 0; k <= 160; k++) {
+    const a = (k / 160) * 2 * Math.PI;
+    oval.push({ x: 4 * Math.sin(a), y: 2.5 - 2.5 * Math.cos(a) }); // starts at (0, 0) heading east, clockwise on screen
+  }
+  const rect = [{ x: 0, y: 0 }, ...polyline([{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 4 }, { x: 0, y: 4 }, { x: 0, y: 0 }])];
+  for (const [name, pts, shift] of [['freehand oval', oval, false], ['Shift rectangle', rect, true]] as const) {
+    const doc = docOf([]);
+    const { start, cmd } = sketchPts(doc, [...pts], shift);
+    expect(start.empty).toBe(true);
+    new History().exec(cmd!, doc);
+    expect(doc.graph.overlaps, name).toEqual([]);
+    expect(doc.graph.open, name).toEqual([]);
+    expect(doc.graph.nearMisses, name).toEqual([]);
+    expect(ofType(doc, 'buffer'), name).toHaveLength(0);
+  }
+});

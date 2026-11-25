@@ -150,6 +150,16 @@ function pastHalf(spec: PieceSpec, points: Vec2[], endPt: Vec2): boolean {
   return false;
 }
 
+/** The outward pose and level of the first ghost connector at an empty start `pos`, or null. */
+function startConnector(ghost: PieceSpec[], pos: Vec2): { to: Pose; level: number } | null {
+  for (const s of ghost) {
+    const i = pieceGeometry(s).connectors.findIndex((_, k) => dist(outPose(s, k), pos) < JOIN_POS_TOL);
+    if (i < 0) continue;
+    return { to: outPose(s, i), level: s.level + pieceGeometry(s).connectors[i].levelOffset };
+  }
+  return null;
+}
+
 /**
  * Build the stroke's single command on release (spec §5.4), or null for a stroke shorter than
  * MIN_STROKE or one that lays no track. The fitter must have been built on `strokeDoc(doc, start)`.
@@ -157,7 +167,8 @@ function pastHalf(spec: PieceSpec, points: Vec2[], endPt: Vec2): boolean {
  * 2. A red stroke ends at its lead (the last good piece) in a buffer stop.
  * 3. The end: an open connector or buffer stop within `snapRadius` at the lead level is joined with
  *    `solveJoin` (the gentlest overlap-free chain over reworking zero to two trailing unfrozen
- *    pieces; a joined buffer is removed); else a
+ *    pieces; a joined buffer is removed). An empty start (no buffer yet) within `snapRadius` is such
+ *    a target too: a loop drawn on an empty table closes on itself, with no buffer at either end. Else a
  *    merging switch on plain straight track, joined to its branch; else (or when no join is found)
  *    a buffer stop at the lead. A lead buffer that would overlap track drops unfrozen trailing
  *    pieces until it fits; if none fits down to `frozen`, the end is left open.
@@ -222,10 +233,10 @@ export function finishStroke(doc: Doc, start: StrokeStart, fitter: StrokeFitter,
    * rework count that closes without overlapping other track (removing `gone` and applying
    * `splice` first) and turns at most MAX_END_JOIN_TURN, the gentlest chain is taken; true when done.
    */
-  const joinTo = (to: Pose, gone: string[], splice?: Splice): boolean => {
+  const joinTo = (to: Pose, gone: string[], splice?: Splice, minKeep = 0): boolean => {
     const n = ghost.length;
     const found: Array<{ keep: number; chain: PieceSpec[] }> = [];
-    for (let k = 0; k <= MAX_REWORK && n - k >= frozen; k++) {
+    for (let k = 0; k <= MAX_REWORK && n - k >= Math.max(frozen, minKeep); k++) {
       const from = k === 0 ? lead : fitter.anchors[n - k];
       const chain = mates(from, to) ? [] : solveJoin(from, to, level);
       if (chain && chainTurn(chain) <= MAX_END_JOIN_TURN && clear(chain, n - k, gone, splice)) found.push({ keep: n - k, chain });
@@ -240,12 +251,14 @@ export function finishStroke(doc: Doc, start: StrokeStart, fitter: StrokeFitter,
   // 2./3. Resolve the end.
   const extra: PieceSpec[] = [];
   let ended = false;
+  /** The end joined the stroke's own empty start: a closed loop, with no buffer at either end. */
+  let closed = false;
   if (!red) {
     const trackDoc = new Doc({ ...doc.layout, pieces: [...world.values()] });
     const ghostPieces = ghost.map((s, i) => specToPiece(s, 'ghost:' + i));
     const full = new Doc({ ...doc.layout, pieces: [...world.values(), ...ghostPieces] });
     const isGhost = (id: string): boolean => id.startsWith('ghost:');
-    const targets: Array<{ to: Pose; d: number; level: number; buffer?: string }> = [];
+    const targets: Array<{ to: Pose; d: number; level: number; buffer?: string; loop?: boolean }> = [];
     for (const c of full.graph.open) {
       if (isGhost(c.pieceId) || c.level !== level) continue;
       const d = dist(c.pos, endPt);
@@ -259,10 +272,14 @@ export function finishStroke(doc: Doc, start: StrokeStart, fitter: StrokeFitter,
       const d = Math.min(dist(c.pos, endPt) <= snapRadius ? dist(c.pos, endPt) : Infinity, routeDist(p, endPt) <= BUFFER_HIT ? routeDist(p, endPt) : Infinity);
       if (d < Infinity) targets.push({ to: poseOf(mate), d, level, buffer: p.id });
     }
+    // A loop on an empty table: released by its own start, which has no buffer yet.
+    const own = start.empty ? startConnector(ghost, start.pos) : null;
+    if (own && own.level === level && dist(own.to, endPt) <= snapRadius) targets.push({ ...own, d: dist(own.to, endPt), loop: true });
     const target = pickNearest(targets, level);
     if (target) {
-      if (joinTo(target.to, target.buffer ? [target.buffer] : [])) {
+      if (joinTo(target.to, target.buffer ? [target.buffer] : [], undefined, target.loop ? 1 : 0)) {
         ended = true;
+        closed = !!target.loop;
         if (target.buffer) remove(target.buffer);
       }
     } else {
@@ -302,15 +319,10 @@ export function finishStroke(doc: Doc, start: StrokeStart, fitter: StrokeFitter,
 
   // 4. Buffer at an empty start, mating the first piece's connector at the start point; left out
   // (an open start) where it would overlap track.
-  if (start.empty) {
-    for (const s of ghost) {
-      const i = pieceGeometry(s).connectors.findIndex((_, k) => dist(outPose(s, k), start.pos) < JOIN_POS_TOL);
-      if (i < 0) continue;
-      const c = pieceGeometry(s).connectors[i];
-      const buf = attachSpec('buffer', false, undefined, outPose(s, i), s.level + c.levelOffset);
-      if (fits(buf)) extra.push(buf);
-      break;
-    }
+  const first = start.empty && !closed ? startConnector(ghost, start.pos) : null;
+  if (first) {
+    const buf = attachSpec('buffer', false, undefined, first.to, first.level);
+    if (fits(buf)) extra.push(buf);
   }
 
   // 5. Merge straights; 6. raised straights over lower track become bridges.
